@@ -75,6 +75,7 @@ export const PALETTE = {
   monitor: "#1a1a1c",
   screen: "#2f3b52",
   ramp: "#b8b0a4",
+  fixture: "#fbfbf6", // ceiling light troffers (emissive in lighting.js)
 };
 
 // ---------- the route ----------
@@ -130,6 +131,28 @@ add([W / 2, CEIL / 2, 0], [WALL_T, CEIL, D], PALETTE.wall, "wall");
 add([0, CEIL + 0.05, 0], [W, 0.1, D], PALETTE.ceiling, "ceiling");
 // soffit band along the hero wall (2.60 m) for depth
 add([0, 2.75, -D / 2 + 0.6], [W, 0.3, 1.2], PALETTE.ceiling, "ceiling");
+
+// ---------- wall cues (fixed cuboids, existing colours) so the big planes read as walls ----------
+const NZ = -D / 2 + WALL_T / 2; // hero wall inner face z=-6.4
+// hero wall: long dark sign band, a whiteboard and a wooden door with an aluminium frame
+add([-0.5, 2.05, NZ + 0.02], [4.4, 0.55, 0.04], PALETTE.chair, "wall");
+add([-4.6, 1.55, NZ + 0.02], [2.4, 1.2, 0.04], PALETTE.desktop, "wall");
+add([-4.6, 1.55, NZ + 0.015], [2.5, 1.3, 0.03], PALETTE.dividerFrame, "wall");
+add([4.6, 1.08, NZ + 0.03], [1.0, 2.16, 0.06], PALETTE.dividerFrame, "wall");
+add([4.6, 1.05, NZ + 0.04], [0.9, 2.1, 0.08], PALETTE.pillar, "wall");
+// south wall: three framed blue panels
+const SZ = D / 2 - WALL_T / 2;
+for (const x of [-4, 0, 4]) {
+  add([x, 1.75, SZ - 0.015], [1.4, 1.0, 0.03], PALETTE.dividerFrame, "wall");
+  add([x, 1.75, SZ - 0.02], [1.3, 0.9, 0.04], PALETTE.dividerTop, "wall");
+}
+
+// ---------- ceiling light fixtures: 0.6 m grid hint, one troffer per seat pitch over each aisle ----------
+// 4 rows x 9 = 36 boxes, one colour, all above y=2.4. Skipped over the soffit band (z<-5.3).
+const FIX_Y = CEIL - 0.015;
+for (const z of [-3.2, 0, 3.2, 5.6]) {
+  for (let s = -1; s < 8; s++) add([BENCH_X - RUN_LEN / 2 + 0.6 + s * PITCH, FIX_Y, z], [1.2, 0.03, 0.3], PALETTE.fixture, "ceiling");
+}
 
 // two dark wood pillars at the west end, outside the ramp approach and spawn line
 for (const z of [-3.6, 3.6]) add([-6.2, CEIL / 2, z], [0.4, CEIL, 0.4], PALETTE.pillar, "pillar");
@@ -203,6 +226,9 @@ for (let b = 0; b < BENCH_Z.length; b++) {
     }
   }
 }
+
+// ---------- turn marker: a 2 mm accent mat across both lanes at the divider gap on the driven bench ----------
+add([X0 + 0.6 + GAP_PITCH * PITCH, DESK_TOP + 0.001, BENCH_Z[DRIVEN_BENCH]], [0.5, 0.002, 1.16], PALETTE.carpetAccent, "desktop");
 
 // ---------- cabins along the east wall (five opaque grey-blue glass fronts) ----------
 const CABIN_X = 6.4;

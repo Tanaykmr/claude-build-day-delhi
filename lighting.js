@@ -12,7 +12,7 @@ export const LIGHTING = {
   background: "#e9e4dc", // warm off-white; only visible through gaps, matches the wall tone
 
   // sky/ground hemisphere = the "office fluorescent + carpet bounce" base fill
-  hemi: { sky: "#e6ecf5", ground: "#5b5348", intensity: 1.15 },
+  hemi: { sky: "#e6ecf5", ground: "#6e675e", intensity: 1.15 }, // ground slightly lifted so the ceiling underside is not a dark slab
 
   // ambient floor so nothing under the desks goes black
   ambient: { color: "#ffffff", intensity: 0.25 },
@@ -74,4 +74,6 @@ export const CARPET = {
 // Screen faces (tag "monitor", color = PALETTE.screen) can be emissive so monitors read as "on".
 export const EMISSIVE = {
   "#2f3b52": { color: "#3d5a8a", intensity: 0.9 },
+  "#fbfbf6": { color: "#ffffff", intensity: 1.6 }, // ceiling light troffers (tag "ceiling") glow
+  "#f4f4f2": { color: "#f4f4f2", intensity: 0.35 }, // ceiling slab: self-lit a little; nothing lights its underside
 };
