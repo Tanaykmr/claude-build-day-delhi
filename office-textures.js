@@ -101,6 +101,7 @@ function surfaceProfile(tag, color, palette, maps) {
   if (['ceiling', 'wall'].includes(tag)) return { kind: 'paint', map: maps.laminate, scale: .5, roughness: .9, bump: .00012 };
   if (['leg', 'chair'].includes(tag)) return { kind: 'metal', map: maps.grain, scale: .075, roughness: .32, metalness: .2, bump: .00002 };
   if (tag === 'desk-item') return { kind: 'accessory', map: maps.grain, scale: .08, roughness: .57, bump: .00004 };
+  if (tag === 'cpu' && maps.cpu) return { kind: 'cpu-rgb', map: maps.cpu, scale: 1, roughness: .26, metalness: .18, bump: 0, color: '#ffffff' };
   if (['cpu', 'monitor', 'storage', 'bin', 'cable', 'ramp'].includes(tag))
     return { kind: tag === 'cpu' ? 'cpu' : 'plastic', map: maps.grain, scale: .08, roughness: .61, bump: .00007 };
   if (['cup', 'bottle', 'files', 'plant'].includes(tag))
@@ -138,6 +139,13 @@ function shaderPatch(material, profile, THREE) {
         float screenIndex = floor(vOfficeScreen + .5);
         vec2 cell = vec2(mod(screenIndex, 2.0), floor(screenIndex / 2.0));
         return (cell + mix(vec2(.008), vec2(.992), vOfficeUv)) * .5;
+      }
+    ` : kind === 'cpu-rgb' ? `
+      vec2 officeUV() {
+        // Atlas rows in the image: glass/front, top/rear. Texture upload flips Y.
+        vec3 n = abs(vOfficeNormal);
+        vec2 cell = n.x > .5 ? vec2(0., 1.) : (n.y > .5 ? vec2(0., 0.) : (vOfficeNormal.z > 0. ? vec2(1., 1.) : vec2(1., 0.)));
+        return (cell + mix(vec2(.012), vec2(.988), vOfficeUv)) * .5;
       }
     ` : kind === 'carpet' ? `
       vec2 officeUV() {
@@ -191,10 +199,15 @@ function shaderPatch(material, profile, THREE) {
         }
       ` : ''}
     `);
-    if (kind === 'screen') {
+    if (kind === 'screen' || kind === 'cpu-rgb') {
       shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>', `
         #ifdef USE_EMISSIVEMAP
           totalEmissiveRadiance *= texture2D(emissiveMap, officeUV()).rgb;
+          ${kind === 'cpu-rgb' ? `
+            vec3 led = texture2D(emissiveMap, officeUV()).rgb;
+            float chroma = max(max(led.r, led.g), led.b) - min(min(led.r, led.g), led.b);
+            totalEmissiveRadiance *= smoothstep(.06, .28, chroma);
+          ` : ''}
         #endif
       `);
     }
@@ -212,7 +225,7 @@ function shaderPatch(material, profile, THREE) {
 export async function installOfficeTextures({ THREE, renderer, bindings, palette = {}, quality = 'high' }) {
   const stats = { materials: 0, loaded: [], failed: [], gpuBytesEstimate: 0, extraDrawCalls: 0, quality, enabled: true };
   const images = {}, textures = new Set(), snapshots = new Map(), applied = new Map();
-  const files = { carpet: 'carpet.webp', upholstery: 'upholstery.webp', wood: 'wood.webp', laminate: 'laminate.webp', wallpaper: 'wallpaper.webp',
+  const files = { cpu: 'cpu-rgb.webp', carpet: 'carpet.webp', upholstery: 'upholstery.webp', wood: 'wood.webp', laminate: 'laminate.webp', wallpaper: 'wallpaper.webp',
     wordmark: 'claude-wordmark.svg', symbol: 'claude-symbol.svg', anthropic: 'anthropic-wordmark.svg' };
   await Promise.all(Object.entries(files).map(async ([key, file]) => {
     try { images[key] = await loadImage(file); stats.loaded.push(file); }
@@ -239,10 +252,11 @@ export async function installOfficeTextures({ THREE, renderer, bindings, palette
   const grain = grainCanvas();
   const maps = Object.fromEntries(['carpet', 'upholstery', 'wood', 'laminate'].map(k => [k, texture(images[k])]));
   maps.grain = texture(grain); maps.screen = texture(screenCanvas(images), true, false);
+  maps.cpu = texture(images.cpu, true, false);
   const heights = new Map();
   if (quality !== 'low') {
     for (const [key, map] of Object.entries(maps)) {
-      if (map && key !== 'screen') heights.set(map, texture(heightCanvas(key === 'grain' ? grain : images[key]), false));
+      if (map && key !== 'screen' && key !== 'cpu') heights.set(map, texture(heightCanvas(key === 'grain' ? grain : images[key]), false));
     }
   }
   const seen = new Set();
@@ -259,6 +273,7 @@ export async function installOfficeTextures({ THREE, renderer, bindings, palette
     if (p.color) material.color.set(p.color);
     if (p.bump && quality !== 'low') { material.bumpMap = heights.get(p.map); material.bumpScale = p.bump; }
     if (p.kind === 'screen') { material.emissive.set('#ffffff'); material.emissiveMap = maps.screen; material.emissiveIntensity = .68; }
+    if (p.kind === 'cpu-rgb') { material.emissive.set('#ffffff'); material.emissiveMap = maps.cpu; material.emissiveIntensity = 1.25; }
     shaderPatch(material, p, THREE);
     applied.set(material, { copy: material.clone(), onBeforeCompile: material.onBeforeCompile, cacheKey: material.customProgramCacheKey });
     stats.materials++;
