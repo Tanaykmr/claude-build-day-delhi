@@ -250,8 +250,21 @@
         obstacles.push(mesh);
         return { body, mesh };
       });
-      // Debug/selection hook: ?handling=classic|joyride picks the car.js controller (independent of ?fallback).
+      // Debug/selection hook: ?handling=joyride|classic picks the car.js controller (default joyride; classic is
+      // the pre-A1 Rapier-wheel controller kept for comparison). Independent of ?fallback.
       const handling = HANDLINGS.includes(params.get('handling')) ? params.get('handling') : DEFAULT_HANDLING;
+      // Optional visual-only surface pack. ?textures=off retains the original materials.
+      // No room entries, colliders or vehicle parameters are changed by this module.
+      if (params.get('textures') !== 'off') {
+        try {
+          const { installOfficeTextures } = await import('./office-textures.js');
+          window.__officeTextures = await installOfficeTextures({
+            THREE, renderer, palette: roomModule.PALETTE || {},
+            quality: params.get('textures') === 'low' || params.get('detail') === 'low' ? 'low' : 'high',
+            bindings: Array.from(materials, ([key, material]) => ({ material, tag: key.split('/')[1] })),
+          });
+        } catch (error) { console.warn('Office textures unavailable; retaining original materials.', error); }
+      }
       const car = createCar(RAPIER, world, SPAWN, { handling });
       const carMesh = new THREE.Group();
       scene.add(carMesh);

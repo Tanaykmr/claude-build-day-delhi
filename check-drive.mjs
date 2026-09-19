@@ -7,7 +7,7 @@
 //   node check-drive.mjs --verbose  # per-0.25 s telemetry
 //   node check-drive.mjs --car '{"stiffness":300}'   # override CAR fields for tuning sweeps
 //   node check-drive.mjs --live --ramp=15            # gentler ramp angle (room.js ?ramp= knob)
-//   node check-drive.mjs --handling=joyride          # select the car.js controller (default: DEFAULT_HANDLING)
+//   node check-drive.mjs --handling=classic          # select the car.js controller (default: car.js DEFAULT_HANDLING = joyride)
 //   node check-drive.mjs --trace                     # motion traces only: per-step CSVs in .traces/ + jitter metrics
 //   node check-drive.mjs --trace=straight,slide      # subset of the trace scenarios (see TRACES below)
 import RAPIER from '@dimforge/rapier3d-compat';
@@ -36,14 +36,14 @@ if (rampArg) globalThis.location = { search: `?ramp=${rampArg.slice(7)}` }; // r
 const carArg = argv.indexOf('--car');
 if (carArg >= 0) globalThis.CAR_OVERRIDE = JSON.parse(argv[carArg + 1]);
 const {
-  CAR, STEP, createWorld, createCar, roomColliderDesc, stepVehicle, resetCar, forwardSpeed, lateralSpeed, pitchRoll,
+  CAR, STEP, DEFAULT_HANDLING, createWorld, createCar, roomColliderDesc, stepVehicle, resetCar, forwardSpeed, lateralSpeed, pitchRoll,
   heading, upVector, wheelContacts, validBody, needsRecovery, headingQuaternion,
   rampGeometry, demoPhases, createDriver, carState,
 } = await import('./car.js');
 
 const args = new Set(argv);
 const verbose = args.has('--verbose');
-const handling = argv.find(a => a.startsWith('--handling='))?.slice(11) || 'classic';
+const handling = argv.find(a => a.startsWith('--handling='))?.slice(11) || DEFAULT_HANDLING;
 const traceArg = argv.find(a => a === '--trace' || a.startsWith('--trace='));
 const traceNames = traceArg ? (traceArg.includes('=') ? traceArg.slice(8).split(',').filter(Boolean) : null) : undefined;
 const rooms = args.has('--live') ? ['./room.js'] : args.has('--fallback') ? ['./room.fallback.js'] : ['./room.js', './room.fallback.js'];

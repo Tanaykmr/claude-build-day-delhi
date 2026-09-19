@@ -38,13 +38,15 @@ export const WHEELS = [
 ];
 export const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 
-// Handling selector. 'classic' = the Rapier DynamicRayCastVehicleController drives, brakes and grips
-// (engine force / brake impulse / tire friction). 'joyride' = the controller does suspension and wheel
-// contact ONLY; propulsion, braking, lateral grip and yaw are Joyride's planar model written onto the
-// chassis velocity. Chosen per car in createCar({ handling }); index.html reads ?handling=, check-drive.mjs
-// reads --handling=. Never a global.
+// Handling selector. 'joyride' (default since milestone A1) = the Rapier DynamicRayCastVehicleController does
+// suspension and wheel contact ONLY; propulsion, braking, lateral grip and yaw are Joyride's planar model
+// written onto the chassis velocity. 'classic' = the previous controller, where Rapier's wheels drive, brake
+// and grip (engine force / brake impulse / tire friction); kept selectable for comparison and as the fallback
+// (?handling=classic in the browser, --handling=classic in check-drive.mjs). Chosen per car in
+// createCar({ handling }); never a global. Promotion evidence: check-drive 32/32 on both rooms and --ramp=15,
+// jitter metrics at or below the classic BASELINE in check-drive.mjs, filmstrips in .shots/a4-joy-strip-*.
 export const HANDLINGS = Object.freeze(['classic', 'joyride']);
-export const DEFAULT_HANDLING = 'classic';
+export const DEFAULT_HANDLING = 'joyride';
 
 // Joyride CRUISER → 12 cm RC car. Scaling decisions (Joyride values in brackets):
 // • Speed. maxSpeed stays the office's 1.2 m/s = 10 car lengths/s [32 m/s = 7 lengths/s]; the room, ramp and
