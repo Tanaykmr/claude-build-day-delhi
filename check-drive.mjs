@@ -190,8 +190,30 @@ async function testRoom(path) {
       },
     });
     report('i. descend ramp nose-first', !r.failure && r.reached, r.failure || `${fmt(r.last)} minUp=${f3(r.minUp)} peak downhill ${f3(maxDown)} m/s`);
+
+    // (j) real route: from SPAWN, back up, loop left to the ramp line, then climb. A heading-hold
+    // driver stands in for the human; proves the west-end approach has room for the turning circle.
+    resetCar(car, SPAWN); drive(ctx, 1, IDLE);
+    const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+    const hold = (target, s, gain = 3) => Math.max(-1, Math.min(1, gain * wrap(target - s.heading)));
+    const creep = s => (s.fwd > .5 ? 0 : 1);
+    const phases = [
+      ['reverse to the west wall', 3, () => REV(), s => s.x < SPAWN.pos[0] - .55],
+      ['turn left toward -Z', 6, s => ({ throttle: creep(s), steer: 1, brake: false }), s => wrap(s.heading - Math.PI) > -.08],
+      ['run along -Z to the ramp line', 8, s => ({ throttle: creep(s), steer: hold(Math.PI, s), brake: false }), s => s.z < rampZ + .22],
+      ['turn right onto +X', 6, s => ({ throttle: creep(s), steer: -1, brake: false }), s => wrap(s.heading - Math.PI / 2) < .08],
+      ['climb', 12, s => ({ throttle: 1, steer: hold(Math.PI / 2, s) + 4 * (s.z - rampZ), brake: false }),
+        s => s.x > crestX + .1 && s.y > deskTop + restHeight - .01 && s.contacts.every(Boolean)],
+    ];
+    let routeFailure = null, routeNote = [];
+    for (const [label, seconds, input, until] of phases) {
+      r = drive(ctx, seconds, input, { until, watch: s => s.up < .7 ? `tipped during "${label}" at ${fmt(s)}` : null });
+      routeNote.push(`${label}: (${f3(r.last.x)}, ${f3(r.last.z)}) hdg ${f3(r.last.heading)}`);
+      if (r.failure || !r.reached) { routeFailure = r.failure || `did not finish "${label}" in ${seconds} s at ${fmt(r.last)}`; break; }
+    }
+    report('j. route from SPAWN to the desktop', !routeFailure, routeFailure || routeNote.join(' → '));
   } else {
-    for (const name of ['g. descend ramp to floor (reverse)', 'h. turning circle fits the desk lane', 'i. descend ramp nose-first']) report(name, false, 'skipped: ascent failed');
+    for (const name of ['g. descend ramp to floor (reverse)', 'h. turning circle fits the desk lane', 'i. descend ramp nose-first', 'j. route from SPAWN to the desktop']) report(name, false, 'skipped: ascent failed');
   }
 }
 
