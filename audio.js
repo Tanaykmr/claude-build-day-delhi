@@ -12,6 +12,28 @@
 // driven with setTargetAtTime (allocation-free per frame); one-shots and music notes are created per event
 // and disconnect themselves when they end.
 
+// ---------------------------------------------------------------------------------------------- host API
+// Stable surface for the page and for menu.js. Everything is safe to call before the first gesture (nothing
+// constructs an AudioContext until unlock()), and safe to call if Web Audio is unavailable.
+//
+//   createAudio({ onState })      → handle. onState({ available, ok, muted, musicPlaying }) on every change.
+//   handle.attach(window)         → unlock on the first keydown/pointerdown. Returns the handle.
+//   handle.unlock() / resume() / suspend()
+//   handle.setMuted(on)           → ABSOLUTE global mute for every bus (music, engine, fx). One shared state:
+//                                   menu.js mirrors its MUSIC button and the M key to this, and the HUD
+//                                   speaker glyph reads it back, so the two can never disagree.
+//   handle.toggleMute()           → convenience; returns the new muted value.
+//   handle.muted                  → current mute state.
+//   handle.setMusicPlaying(on, fadeSeconds = .8)
+//                                 → fade the GAMEPLAY loop in or out. menu.js turns it ON at the Drive
+//                                   handover and OFF when the menu reopens, so the menu theme and this loop
+//                                   never overlap. Independent of mute. Defaults to ON, so a page with no menu
+//                                   (every ?debug / ?strip / capture URL) still gets music without being told.
+//   handle.musicPlaying           → current value.
+//   handle.subscribe(fn)          → same payload as onState; returns an unsubscribe function.
+//   handle.update(car)            → per frame: engine, scrub and the music scheduler.
+//   handle.event(name, { strength, pan }) → beep | go | checkpoint | lap | finish | impact | clatter | land.
+//
 // Mix. Music sits ~12 dB under the engine so it never competes with the thing the player is steering.
 export const MIX = Object.freeze({ master: .45, music: .22, engine: .62, fx: .85 });
 const TAU = .05;            // setTargetAtTime constant: ~95% of the way there in 0.15 s
@@ -49,12 +71,16 @@ const midiHz = m => 440 * Math.pow(2, (m - 69) / 12);
 
 export function createAudio({ onState } = {}) {
   const a = {
-    ctx: null, ok: false, muted: false, playing: false,
+    ctx: null, ok: false, muted: false, playing: false, musicPlaying: true,
     master: null, buses: { music: null, engine: null, fx: null }, noise: null,
     osc1: null, osc2: null, engFilter: null, engGain: null, burble: null, burbleGain: null, scrubGain: null,
     music: { step: 0, nextTime: 0, on: true },
   };
-  const state = () => onState?.({ available: !!a.ctx, ok: a.ok, muted: a.muted });
+  const listeners = new Set(onState ? [onState] : []);
+  const state = () => {
+    const payload = { available: !!a.ctx, ok: a.ok, muted: a.muted, musicPlaying: a.musicPlaying };
+    for (const fn of listeners) { try { fn(payload); } catch (error) { /* a listener must not break audio */ } }
+  };
 
   function bus(ctx, gain) { const g = ctx.createGain(); g.gain.value = gain; g.connect(a.master); return g; }
 
@@ -63,7 +89,7 @@ export function createAudio({ onState } = {}) {
     master.gain.value = a.muted ? 0 : MIX.master;
     master.connect(ctx.destination);
     a.master = master;
-    a.buses = { music: bus(ctx, MIX.music), engine: bus(ctx, MIX.engine), fx: bus(ctx, MIX.fx) };
+    a.buses = { music: bus(ctx, a.musicPlaying ? MIX.music : 0), engine: bus(ctx, MIX.engine), fx: bus(ctx, MIX.fx) };
 
     // One deterministic white-noise buffer shared by every noise voice and one-shot.
     const len = Math.max(1, Math.floor(ctx.sampleRate * NOISE_SECONDS));
@@ -175,12 +201,30 @@ export function createAudio({ onState } = {}) {
   };
   a.resume = () => { if (a.ctx?.state === 'suspended') a.ctx.resume?.().catch?.(() => {}); };
   a.suspend = () => { if (a.ctx?.state === 'running') a.ctx.suspend?.().catch?.(() => {}); };
-  a.toggleMute = () => {
-    a.muted = !a.muted;
-    if (a.ok) { try { a.master.gain.setTargetAtTime(a.muted ? 0 : MIX.master, a.ctx.currentTime, .02); } catch (error) { a.ok = false; } }
+  a.setMuted = on => {
+    const muted = !!on;
+    if (muted === a.muted) { state(); return a.muted; }
+    a.muted = muted;
+    if (a.ok) { try { a.master.gain.setTargetAtTime(muted ? 0 : MIX.master, a.ctx.currentTime, .02); } catch (error) { a.ok = false; } }
     state();
     return a.muted;
   };
+  a.toggleMute = () => a.setMuted(!a.muted);
+  // Fade the gameplay loop in or out. The scheduler stops queueing notes once the bus is down, and the step
+  // clock is re-based on the way back in, so a long spell in the menu never replays a backlog of bars.
+  a.setMusicPlaying = (on, fade = .8) => {
+    a.musicPlaying = !!on;
+    a.music.on = a.musicPlaying;
+    if (a.ok) {
+      try {
+        a.buses.music.gain.setTargetAtTime(a.musicPlaying ? MIX.music : 0, a.ctx.currentTime, Math.max(.01, fade / 3));
+        if (a.musicPlaying) a.music.nextTime = a.ctx.currentTime + .05;
+      } catch (error) { a.ok = false; }
+    }
+    state();
+    return a.musicPlaying;
+  };
+  a.subscribe = fn => { if (typeof fn === 'function') { listeners.add(fn); fn({ available: !!a.ctx, ok: a.ok, muted: a.muted, musicPlaying: a.musicPlaying }); } return () => listeners.delete(fn); };
   // Per-frame: engine tone from the car's speed and throttle, scrub from lateral slip and braking, and the
   // music lookahead. `car` is a car.js car (vF, vL, input, slipping).
   a.update = (car) => {
@@ -219,7 +263,6 @@ export function createAudio({ onState } = {}) {
       else if (name === 'land') { burst(t, .12, .3 * p, 'lowpass', 500, 300, .8, { pan }); note(t, 80, .16, .35 * p, { sweep: 55, pan }); }
     } catch (error) { a.ok = false; }
   };
-  a.setMusic = on => { a.music.on = !!on; };
   // Convenience for a browser host: unlock on the first gesture of either kind.
   a.attach = target => {
     if (!target?.addEventListener) return a;

@@ -315,11 +315,18 @@ function createSynthLoop(ctx) {
   return { gain: out.gain, stop: () => { clearInterval(timer); out.disconnect(); } };
 }
 
-// ---------- music: one looping track, faded between menu and game levels ----------
-function createMusic(sfx, button, showToast) {
+// ---------- music: the menu theme, handed over to the game's own loop on Drive ----------
+// `game` is the audio.js handle index.html passes in (see the API block at the top of audio.js). It owns the
+// GAMEPLAY music and the single mute state; this function owns the MENU theme. The two never play together:
+// setLevel(GAME_VOL) fades this out and the game loop in, setLevel(MENU_VOL) does the reverse. Everything here
+// still works when `game` is absent (the module failed to load, or a page mounts the menu on its own).
+function createMusic(sfx, button, showToast, game = null) {
   const audio = new Audio(new URL('./audio/menu-theme.mp3', here).href);
   audio.loop = true; audio.preload = 'auto'; audio.volume = 0;
   let enabled = localStorage.getItem(MUSIC_KEY) !== '0';
+  let inGame = false;
+  game?.setMuted(!enabled);          // the stored preference is the shared state's starting value
+  game?.setMusicPlaying(false, 0);   // the menu is open: the gameplay loop stays down until Drive
   let wanted = MENU_VOL, target = 0, current = 0, raf = 0, unlocked = false, broken = false, synth = null;
   audio.addEventListener('error', () => { broken = true; if (unlocked && enabled) startSynth(); });
   function startSynth() {
@@ -343,16 +350,36 @@ function createMusic(sfx, button, showToast) {
     raf = requestAnimationFrame(tick);
   }
   function render() { button.setAttribute('aria-pressed', String(enabled)); button.title = enabled ? 'Music on (M)' : 'Music off (M)'; }
+  // If anything else changes the shared mute state (the page's own M handler when no menu is mounted, a future
+  // settings screen), the button follows it rather than drifting out of sync.
+  game?.subscribe(({ muted }) => {
+    if (muted === !enabled) return;
+    enabled = !muted;
+    localStorage.setItem(MUSIC_KEY, enabled ? '1' : '0');
+    render();
+    fadeTo(enabled && !inGame ? wanted : 0);
+  });
   function unlock() { if (unlocked) return; unlocked = true; if (enabled) fadeTo(wanted); }
   audio.play().then(() => { unlocked = true; if (enabled) fadeTo(wanted); else audio.pause(); })
     .catch(() => { if (enabled) showToast('Click or press a key for sound'); });
   render();
   return {
     unlock,
-    setLevel(level) { wanted = level; if (enabled && unlocked) fadeTo(level); },
+    // level is MENU_VOL while the menu is up and GAME_VOL once the game has control. With a game handle the
+    // theme steps aside completely for the gameplay loop instead of ducking under it.
+    setLevel(level) {
+      wanted = level;
+      inGame = game ? level !== MENU_VOL : false;
+      if (game) { game.unlock(); game.setMusicPlaying(inGame && enabled); }
+      if (enabled && unlocked) fadeTo(inGame ? 0 : wanted);
+    },
     toggle() {
-      enabled = !enabled; localStorage.setItem(MUSIC_KEY, enabled ? '1' : '0'); render();
-      if (enabled) { unlock(); fadeTo(wanted); showToast('Music on'); } else { fadeTo(0); showToast('Music off'); }
+      enabled = !enabled;
+      localStorage.setItem(MUSIC_KEY, enabled ? '1' : '0');
+      render();
+      game?.setMuted(!enabled);          // one state for the menu theme, the engine, the effects and the loop
+      if (enabled) { unlock(); game?.setMusicPlaying(inGame); fadeTo(inGame ? 0 : wanted); showToast('Sound on'); }
+      else { fadeTo(0); showToast('Sound off'); }
     },
     get enabled() { return enabled; },
   };
@@ -410,7 +437,7 @@ function createBackdrop(canvas) {
   };
 }
 
-export function mountMenu({ statusEl = null, onChange = () => {} } = {}) {
+export function mountMenu({ statusEl = null, onChange = () => {}, audio: game = null } = {}) {
   const params = new URLSearchParams(location.search);
   const fallback = params.has('fallback');
   const currentMapId = params.get('map') || '';
@@ -457,7 +484,7 @@ export function mountMenu({ statusEl = null, onChange = () => {} } = {}) {
   const sfx = createSfx();
   let toastTimer = 0;
   const showToast = (text, ms = 2600) => { toastText.textContent = text; toast.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove('show'), ms); };
-  const music = createMusic(sfx, $('[data-music]'), showToast);
+  const music = createMusic(sfx, $('[data-music]'), showToast, game);
   const backdrop = createBackdrop($('.stm-bg'));
 
   let open = true, ready = false, started = false, index = 0, closing = 0;
@@ -515,7 +542,7 @@ export function mountMenu({ statusEl = null, onChange = () => {} } = {}) {
   $$('button, a, .stm-phase').forEach(el => el.addEventListener('pointerenter', () => sfx.tick()));
   root.addEventListener('click', e => { if (e.target.closest?.('button, a') && !e.target.closest('[data-primary], [data-drive], [data-generate]')) sfx.tick(); });
 
-  const unlock = () => { sfx.ensure(); music.unlock(); toast.classList.remove('show'); };
+  const unlock = () => { sfx.ensure(); music.unlock(); game?.unlock(); toast.classList.remove('show'); };
   addEventListener('pointerdown', unlock, { passive: true });
   addEventListener('keydown', unlock);
 

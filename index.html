@@ -71,7 +71,10 @@
     #actions[hidden] { display: none; }
     #diagnostics { position: fixed; top: 115px; left: 24px; white-space: pre; font: 12px monospace; pointer-events: none; }
     .strip-label { position: fixed; font: 12px monospace; color: #fff; background: #0009; padding: 2px 6px; pointer-events: none; }
-    @media (max-width: 760px) { .hud-tl, .hud-bl { left: 12px; } #minimap, .hud-br, #speedo { right: 12px; } #minimap { width: 160px; height: 132px; } #speedo { --dial: 148px; } .speedo-scale { display: none; } .speedo-real { display: none; } /* a 148px face carries a number, a unit and a gear pill legibly, not four things; #meter stays in the DOM, so the headless probes still read it */ .hud-br { bottom: 184px; } .hud-bl { bottom: 188px; max-width: calc(100vw - 24px); } .hud-bc { bottom: 254px; font-size: 17px; } .panel { padding: 10px 12px; } }
+    @media (max-width: 760px) { .hud-tl, .hud-bl { left: 12px; } #minimap, .hud-br, #speedo { right: 12px; } #minimap { width: 160px; height: 132px; } #speedo { --dial: 148px; } .speedo-scale { display: none; } .speedo-real { display: none; } /* a 148px face carries a number, a unit and a gear pill legibly, not four things; #meter stays in the DOM, so the headless probes still read it */ /* Bottom-up ladder at this width, each clearing the one below: dial 20..168, controls 188..260,
+       simple-room 270..309, race prompt 320..365. The controls bar wraps to two lines here, so the
+       right-hand link cannot share its row; stack it above instead of beside it. */
+    .hud-bl { bottom: 188px; max-width: calc(100vw - 24px); } .hud-br { bottom: 270px; } .hud-bc { bottom: 320px; font-size: 17px; } .panel { padding: 10px 12px; } }
   </style>
   <script type="importmap">
     { "imports": {
@@ -144,7 +147,23 @@
     // URLs skip it and drop straight into the game, so shot.sh and ?demo=1 behave exactly as before.
     const autoStart = ['demo', 'script', 'cam', 'spawn', 'preroll', 'strip', 'mode', 'debug', 'nomenu'].some(k => new URLSearchParams(location.search).has(k));
     let onMenuChange = () => {};
-    const menu = autoStart ? null : mountMenu({ statusEl: document.querySelector('#detail'), onChange: open => onMenuChange(open) });
+    // The audio handle is built here, before the menu mounts, so both sides share ONE mute state and one music
+    // owner: menu.js plays its theme while the menu is open and hands over to the gameplay loop on Drive (see the
+    // API block at the top of audio.js). No AudioContext exists until the first gesture either way.
+    function paintSound({ available, muted }) {   // HUD speaker glyph: waves when on, slash when muted or unavailable
+      const glyph = document.querySelector('#sound-glyph'), label = document.querySelector('#sound-label');
+      if (!glyph || !label) return;
+      const on = available && !muted;
+      document.querySelector('#sound-waves').hidden = !on;
+      document.querySelector('#sound-slash').hidden = on;
+      glyph.classList.toggle('off', !on);
+      label.textContent = !available ? 'sound' : muted ? 'sound off' : 'sound on';
+    }
+    const audio = createAudio({ onState: paintSound }).attach(window);
+    // ?debug or ?probe exposes the handle so a CDP probe can assert the mute/music state, which no screenshot can
+    // show. ?probe is deliberately NOT in the menu's bypass list above: the menu must stay up for a handover probe.
+    if (['debug', 'probe'].some(k => new URLSearchParams(location.search).has(k))) window.__audio = audio;
+    const menu = autoStart ? null : mountMenu({ statusEl: document.querySelector('#detail'), onChange: open => onMenuChange(open), audio });
 
     function validateData(ROOM, SPAWN, PROPS) {
       if (!Array.isArray(ROOM) || !ROOM.length) throw new Error('ROOM must be a nonempty array.');
@@ -562,7 +581,7 @@
         if (e.repeat || paused || failed || e.target.closest?.('button, a, input, textarea')) return;
         if (e.code === 'Enter' && RACE && (!race || race.phase === 'finished')) { e.preventDefault(); startRace(); }
         else if ((e.code === 'Escape' || e.code === 'KeyF') && race) { e.preventDefault(); endRace(); }
-        else if (e.code === 'KeyM') { e.preventDefault(); audio.toggleMute(); }
+        else if (e.code === 'KeyM' && !menu) { e.preventDefault(); audio.toggleMute(); } // with a menu, menu.js owns M and drives the same shared state
       });
       window.addEventListener('blur', () => setPaused(true));
       window.addEventListener('focus', () => setPaused(document.hidden));
@@ -773,20 +792,9 @@
         set('time', hud.time, fmtTime(me.finished ? me.time : race.clock));
         if (race.phase === 'finished' && hud.last.resultsOrder !== order.join()) { hud.last.resultsOrder = order.join(); showResults(); }
       }
-      const audio = createAudio({ onState: paintSound }).attach(window);
       // Contact effects: drift smoke, impact dust/sparks, landing puffs and skid marks (fx.js).
       const effects = createEffects({ THREE, scene });
       if (params.has('debug')) window.__fx = effects; // ?debug exposes the pools for CDP probes (skid/particle counts)
-      // The HUD speaker glyph mirrors the audio state: waves when it is on, a slash when muted or unavailable.
-      function paintSound({ available, muted }) {
-        const glyph = document.querySelector('#sound-glyph'), label = document.querySelector('#sound-label');
-        if (!glyph || !label) return;
-        const on = available && !muted;
-        document.querySelector('#sound-waves').hidden = !on;
-        document.querySelector('#sound-slash').hidden = on;
-        glyph.classList.toggle('off', !on);
-        label.textContent = !available ? 'sound' : muted ? 'sound off' : 'sound on';
-      }
       // Impact detection from Rapier's contact manifolds after each step: per racer the summed contact impulse and the
       // mean solver contact point. Only a RISE in impulse counts as a hit (leaning on a wall is not a series of hits),
       // rate-limited to one event per 0.15 s per car. strength = impulse / (mass · top speed) = fraction of a
