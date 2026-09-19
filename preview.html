@@ -103,8 +103,8 @@ sun.shadow.mapSize.set(L.sun.shadowMapSize, L.sun.shadowMapSize);
 sun.shadow.bias = L.sun.shadowBias; sun.shadow.normalBias = L.sun.shadowNormalBias;
 const b = L.sun.shadowBounds; Object.assign(sun.shadow.camera, { left: -b, right: b, top: b, bottom: -b, near: 0.5, far: 40 });
 const fill = new THREE.DirectionalLight(L.fill.color, L.fill.intensity); fill.position.set(...L.fill.position);
-const rim = new THREE.PointLight(L.rim.color, L.rim.intensity, 8, 1.2); rim.position.set(...L.rim.position);
-scene.add(hemi, ambient, sun, sun.target, fill, rim);
+const rim = new THREE.DirectionalLight(L.rim.color, L.rim.intensity); rim.position.set(...L.rim.position); rim.target.position.set(0, 0, 0); // same as A: directional aimed at the origin (up-light)
+scene.add(hemi, ambient, sun, sun.target, fill, rim, rim.target);
 
 // ---------- carpet texture (procedural, from lighting.js CARPET) ----------
 function makeCarpetTexture(c) {
@@ -275,7 +275,7 @@ slider("sun y", () => L.sun.position[1], (v) => { L.sun.position[1] = v; sun.pos
 slider("sun z", () => L.sun.position[2], (v) => { L.sun.position[2] = v; sun.position.z = v; }, -12, 12, 0.1);
 slider("fill", () => L.fill.intensity, (v) => (L.fill.intensity = fill.intensity = v), 0, 2);
 colorCtl("fill color", () => L.fill.color, (v) => { L.fill.color = v; fill.color.set(v); });
-slider("rim", () => L.rim.intensity, (v) => (L.rim.intensity = rim.intensity = v), 0, 3);
+slider("up-light (rim)", () => L.rim.intensity, (v) => (L.rim.intensity = rim.intensity = v), 0, 3);
 slider("shadow bias", () => L.sun.shadowBias, (v) => (L.sun.shadowBias = sun.shadow.bias = v), -0.003, 0.003, 0.0001);
 document.getElementById("copyLight").onclick = async () => { await navigator.clipboard.writeText("export const LIGHTING = " + JSON.stringify(L, null, 2) + ";"); say("LIGHTING JSON copied — paste into lighting.js"); };
 

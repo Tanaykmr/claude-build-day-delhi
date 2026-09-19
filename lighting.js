@@ -12,7 +12,7 @@ export const LIGHTING = {
   background: "#e9e4dc", // warm off-white; only visible through gaps, matches the wall tone
 
   // sky/ground hemisphere = the "office fluorescent + carpet bounce" base fill
-  hemi: { sky: "#e6ecf5", ground: "#6e675e", intensity: 1.15 }, // ground slightly lifted so the ceiling underside is not a dark slab
+  hemi: { sky: "#e6ecf5", ground: "#9a948b", intensity: 1.15 }, // bright warm-grey ground: the ceiling underside is lit mostly by this
 
   // ambient floor so nothing under the desks goes black
   ambient: { color: "#ffffff", intensity: 0.25 },
@@ -34,24 +34,28 @@ export const LIGHTING = {
   // cool fill from the north-west so the shaded sides of dividers/chairs stay blue-grey, not muddy
   fill: { color: "#cfe0ff", intensity: 0.55, position: [-8, 4, -6] },
 
-  // gentle desk-height rim from below the ceiling toward the driven lane so the car pops on white
-  rim: { color: "#ffd9b0", intensity: 0.35, position: [-3, 2.6, -1.9] },
+  // UP-LIGHT: a directional light from below the floor aimed at the origin, i.e. shining straight up.
+  // It only reaches downward-facing faces (ceiling slab, desktop undersides, soffit) and lifts the
+  // ceiling from brown-grey to near its #f4f4f2 colour. There is no environment map, so this and the
+  // hemisphere ground are the only things that light the ceiling. (Historic name "rim" kept for A's loader.)
+  rim: { color: "#fff6ea", intensity: 1.3, position: [0.3, -6, 0.2] },
 };
 
 // Per-tag PBR params for MeshStandardMaterial. Flat colors come from each ROOM/PROPS entry.
+// Metalness is capped at 0.2 everywhere: without an environment map, metal just darkens and dulls.
 export const MATERIALS = {
   carpet: { roughness: 1.0, metalness: 0.0 },
   desktop: { roughness: 0.45, metalness: 0.0 },
   divider: { roughness: 0.85, metalness: 0.0 },
-  leg: { roughness: 0.35, metalness: 0.6 },
+  leg: { roughness: 0.4, metalness: 0.2 },
   ramp: { roughness: 0.6, metalness: 0.05 },
   wall: { roughness: 0.95, metalness: 0.0 },
-  cabin: { roughness: 0.15, metalness: 0.2 },
+  cabin: { roughness: 0.2, metalness: 0.15 },
   pillar: { roughness: 0.7, metalness: 0.0 },
   ceiling: { roughness: 1.0, metalness: 0.0 },
-  chair: { roughness: 0.6, metalness: 0.15 },
-  cpu: { roughness: 0.5, metalness: 0.3 },
-  monitor: { roughness: 0.3, metalness: 0.4 },
+  chair: { roughness: 0.6, metalness: 0.1 },
+  cpu: { roughness: 0.5, metalness: 0.2 },
+  monitor: { roughness: 0.35, metalness: 0.2 },
   cup: { roughness: 0.4, metalness: 0.0 },
   bottle: { roughness: 0.2, metalness: 0.1 },
   files: { roughness: 0.9, metalness: 0.0 },
