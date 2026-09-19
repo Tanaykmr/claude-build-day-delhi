@@ -45,7 +45,7 @@
     <div class="panel" id="meter">0.00 m/s</div>
   </header>
   <footer>
-    <div class="panel" id="controls"><kbd>WASD / arrows</kbd> drive &nbsp;·&nbsp; <kbd>Space</kbd> brake &nbsp;·&nbsp; <kbd>R</kbd> recover</div>
+    <div class="panel" id="controls"><kbd>WASD / arrows</kbd> drive &nbsp;·&nbsp; <kbd>Space</kbd> brake &nbsp;·&nbsp; <kbd>Shift</kbd> handbrake &nbsp;·&nbsp; <kbd>R</kbd> recover</div>
     <a class="panel" id="mode-link" href="?fallback=1">Simple room</a>
   </footer>
   <div id="overlay"><section class="panel" id="message" role="status" aria-live="polite">
@@ -59,11 +59,25 @@
     // Track A owns this file. Room geometry and prop placement belong to Track B.
     // Vehicle constants and physics live in car.js, shared with check-drive.mjs (headless test).
     import {
-      CAR, STEP, WHEELS, ROOM_FRICTION, createWorld, createCar, roomColliderDesc, stepVehicle, resetCar,
+      CAR, STEP, WHEELS, ROOM_FRICTION, HANDLINGS, DEFAULT_HANDLING, createWorld, createCar, roomColliderDesc, stepVehicle, resetCar,
       forwardSpeed, validBody, needsRecovery, eulerToQuaternion, rampGeometry, demoPhases, createDriver, carState,
     } from './car.js';
     let THREE, RAPIER;
-    const CAMERA = Object.freeze({ behind: .35, height: .10, lookAhead: .12, near: .005, far: 50, smoothing: 10 });
+    // Chase camera, adapted from Joyride's camera.js (see the attribution in car.js) and scaled from its 4.6 m
+    // CRUISER to the 0.12 m car by car length: dist 9 m → 1.96 lengths → 0.235, tuned to 0.26; height 3.6 m →
+    // 0.78 lengths → 0.094 → 0.09; lookAhead 6 m → 1.3 lengths → 0.156 → 0.15. The speed terms add the same
+    // FRACTION of a length at top speed as Joyride's do at 32 m/s (dist +0.42 lengths, look-ahead +1.74 lengths):
+    // distPerSpeed 0.042 s, lookAheadPerSpeed 0.174 s. spring 6 /s and the 1.5× tighter look spring are per-second
+    // rates and stay; both are applied as 1-exp(-rate·dt) so 60 Hz and 144 Hz displays converge identically.
+    // reverseHold -2 m/s → -0.075 m/s: below this forward speed the camera keeps its last forward (no whip-round
+    // in reverse). lookHeight 1.2 m (0.86 car heights) → 0.03 m. Obstruction handling is ours: a ray from the car
+    // to the sprung position; a blocked camera first tries lifting over the obstacle (desk edges), else shortens.
+    // Both changes ease in fast and ease back out slowly (hysteresis) so a passing chair leg cannot make it flicker.
+    const CAMERA = Object.freeze({
+      dist: .26, height: .09, lookAhead: .15, distPerSpeed: .042, lookAheadPerSpeed: .174, lookHeight: .03,
+      spring: 6, lookSpring: 1.5, reverseHold: -.075, near: .005, far: 50,
+      clearance: .02, lift: .14, shortenRate: 24, restoreRate: 2.5,
+    });
     const finiteVector = (a, n) => Array.isArray(a) && a.length === n && a.every(Number.isFinite);
 
     function validateData(ROOM, SPAWN, PROPS) {
@@ -152,7 +166,7 @@
         renderer.shadowMap.enabled = shadows;
       }
       renderer.domElement.tabIndex = 0;
-      renderer.domElement.setAttribute('aria-label', 'Office driving game. WASD or arrows to drive, Space to brake, R to recover.');
+      renderer.domElement.setAttribute('aria-label', 'Office driving game. WASD or arrows to drive, Space to brake, Shift to slide, R to recover.');
       document.body.prepend(renderer.domElement);
       renderer.domElement.addEventListener('webglcontextlost', e => { e.preventDefault(); showError(new Error('Graphics context lost. Reload to restart.')); });
       function directional(spec, castShadow = false) {
@@ -235,7 +249,9 @@
         obstacles.push(mesh);
         return { body, mesh };
       });
-      const car = createCar(RAPIER, world, SPAWN);
+      // Debug/selection hook: ?handling=classic|joyride picks the car.js controller (independent of ?fallback).
+      const handling = HANDLINGS.includes(params.get('handling')) ? params.get('handling') : DEFAULT_HANDLING;
+      const car = createCar(RAPIER, world, SPAWN, { handling });
       const carMesh = new THREE.Group();
       scene.add(carMesh);
       function carBox(size, pos, color, tag = 'cup') {
@@ -262,7 +278,7 @@
       const groundRay = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
       const surfaceNormal = new THREE.Vector3(), yAxis = new THREE.Vector3(0, 1, 0), blobTilt = new THREE.Quaternion();
       function placeBlob() {
-        const p = car.body.translation();
+        const p = renderPos;
         groundRay.origin = p;
         const hit = world.castRayAndGetNormal(groundRay, .6, true, undefined, undefined, undefined, car.body);
         blob.visible = !!hit;
@@ -271,7 +287,7 @@
         blob.position.set(p.x, p.y - hit.timeOfImpact, p.z).addScaledVector(surfaceNormal, .002);
         // Lie flat on the surface, spun to the car's heading.
         blobTilt.setFromUnitVectors(yAxis, surfaceNormal);
-        blob.quaternion.setFromAxisAngle(yAxis, lastHeading).premultiply(blobTilt);
+        blob.quaternion.setFromAxisAngle(yAxis, carHeading).premultiply(blobTilt);
         blob.material.opacity = Math.max(0, Math.min(1, 1.2 - (hit.timeOfImpact - .02) / .12));
       }
       const wheelMeshes = WHEELS.map(() => {
@@ -281,10 +297,10 @@
         return { pivot, tire };
       });
 
-      const held = new Set(), drivingKeys = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyR']);
+      const held = new Set(), drivingKeys = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'ShiftLeft', 'ShiftRight', 'KeyR']);
       // Debug hook: ?script=W:2.5,A:0.6,WA:1,_:1,R:0.1 holds the listed keys for that many seconds of
-      // simulation time, one segment after another (_ = Space). Keyboard input still works alongside.
-      const SCRIPT_KEYS = { W: 'KeyW', A: 'KeyA', S: 'KeyS', D: 'KeyD', _: 'Space', R: 'KeyR' };
+      // simulation time, one segment after another (_ = Space, H = Shift handbrake). Keyboard input still works alongside.
+      const SCRIPT_KEYS = { W: 'KeyW', A: 'KeyA', S: 'KeyS', D: 'KeyD', _: 'Space', H: 'ShiftLeft', R: 'KeyR' };
       const script = (params.get('script') || '').split(',').filter(Boolean).map(token => {
         const [keys, seconds] = token.split(':');
         return { codes: [...keys.toUpperCase()].map(k => SCRIPT_KEYS[k]).filter(Boolean), steps: Math.max(1, Math.round(Number(seconds || 0) / STEP)) };
@@ -311,6 +327,7 @@
       function clearInput() { held.clear(); resetRequested = false; }
       function setPaused(value) {
         clearInput(); paused = value; accumulator = 0; lastTime = null;
+        if (value) resetPoses(); // nothing moved while paused: do not blend back toward a stale previous pose on resume
         if (failed) return;
         overlay.hidden = !paused;
         if (paused) {
@@ -333,57 +350,97 @@
       resume.addEventListener('click', () => { renderer.domElement.focus(); setPaused(false); });
       renderer.domElement.addEventListener('pointerdown', () => { renderer.domElement.focus(); if (!document.hidden) setPaused(false); });
       const down = (...codes) => codes.some(code => held.has(code) || scripted.has(code));
-      function recover() { clearInput(); resetCar(car, SPAWN); snapCamera = true; }
+      // Previous/current body transforms for render interpolation: physics runs at a fixed 60 Hz, displays do
+      // not. Each render blends prev→curr by the accumulator fraction (position lerp, quaternion slerp).
+      const bodies = [car.body, ...props.map(p => p.body)];
+      const prevPose = bodies.map(() => ({ p: new THREE.Vector3(), q: new THREE.Quaternion() }));
+      const currPose = bodies.map(() => ({ p: new THREE.Vector3(), q: new THREE.Quaternion() }));
+      const renderPos = new THREE.Vector3(), renderQuat = new THREE.Quaternion();
+      function capturePoses(list) {
+        bodies.forEach((body, i) => { list[i].p.copy(body.translation()); list[i].q.copy(body.rotation()); });
+      }
+      function resetPoses() { capturePoses(currPose); prevPose.forEach((pose, i) => { pose.p.copy(currPose[i].p); pose.q.copy(currPose[i].q); }); }
+      function recover() { clearInput(); resetCar(car, SPAWN); resetPoses(); snapCamera = true; }
       function step() {
         advanceScript();
         if (resetRequested) recover();
+        prevPose.forEach((pose, i) => { pose.p.copy(currPose[i].p); pose.q.copy(currPose[i].q); });
         if (demo && demo.done) { demo = null; subtitle.textContent = 'A little car. A familiar office.'; }
         stepVehicle(car, demo ? demo.input(carState(car)) : {
           throttle: Number(down('KeyW', 'ArrowUp')) - Number(down('KeyS', 'ArrowDown')),
           steer: Number(down('KeyA', 'ArrowLeft')) - Number(down('KeyD', 'ArrowRight')),
           brake: down('Space'),
+          handbrake: down('ShiftLeft', 'ShiftRight'),
         });
         world.step();
         simTime += STEP;
+        capturePoses(currPose);
         if (!validBody(car.body) || props.some(p => !validBody(p.body))) throw new Error('Physics became non-finite. Reload for a clean simulation.');
         if (needsRecovery(car, floorBounds.isEmpty() ? roomBounds : floorBounds)) recover();
       }
-      function syncMeshes() {
-        carMesh.position.copy(car.body.translation()); carMesh.quaternion.copy(car.body.rotation());
+      let carHeading = SPAWN.heading;
+      // alpha = accumulator/STEP: how far the render sits between the previous and the current physics state.
+      function syncMeshes(alpha = 1) {
+        renderPos.lerpVectors(prevPose[0].p, currPose[0].p, alpha);
+        renderQuat.slerpQuaternions(prevPose[0].q, currPose[0].q, alpha);
+        carMesh.position.copy(renderPos); carMesh.quaternion.copy(renderQuat);
+        forward.set(0, 0, 1).applyQuaternion(renderQuat);
+        if (Math.hypot(forward.x, forward.z) > .1) carHeading = Math.atan2(forward.x, forward.z);
         wheelMeshes.forEach(({ pivot, tire }, i) => {
           const [x, y, z] = WHEELS[i];
           pivot.position.set(x, y - (car.controller.wheelSuspensionLength(i) ?? CAR.suspRest), z);
           pivot.rotation.y = car.controller.wheelSteering(i) || 0;
           tire.rotation.x = -(car.controller.wheelRotation(i) || 0);
         });
-        for (const { body, mesh } of props) { mesh.position.copy(body.translation()); mesh.quaternion.copy(body.rotation()); }
+        props.forEach(({ mesh }, i) => {
+          mesh.position.lerpVectors(prevPose[i + 1].p, currPose[i + 1].p, alpha);
+          mesh.quaternion.slerpQuaternions(prevPose[i + 1].q, currPose[i + 1].q, alpha);
+        });
         placeBlob();
       }
-      const forward = new THREE.Vector3(), anchor = new THREE.Vector3(), desired = new THREE.Vector3();
-      const viewTarget = new THREE.Vector3(), rayDirection = new THREE.Vector3(), raycaster = new THREE.Raycaster();
-      let lastHeading = SPAWN.heading;
+      const forward = new THREE.Vector3(), anchor = new THREE.Vector3(), want = new THREE.Vector3(), wantLook = new THREE.Vector3();
+      const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), camFwd = { x: Math.sin(SPAWN.heading), z: Math.cos(SPAWN.heading) };
+      const rayDirection = new THREE.Vector3(), lifted = new THREE.Vector3(), raycaster = new THREE.Raycaster();
+      const camState = { clip: 1, lift: 0, blocked: false }; // hysteretic obstruction state (exposed to diagnostics)
+      const ease = (rate, dt) => 1 - Math.exp(-rate * dt);
       // Debug hook: ?cam=x,y,z fixes the camera at a world position, always looking at the car.
       const fixedCamera = (params.get('cam') || '').split(',').map(Number);
       const hasFixedCamera = fixedCamera.length === 3 && fixedCamera.every(Number.isFinite);
-      function updateCamera(dt) {
-        if (hasFixedCamera) { camera.position.set(...fixedCamera); camera.lookAt(carMesh.position); return; }
-        forward.set(0, 0, 1).applyQuaternion(carMesh.quaternion);
-        if (Math.hypot(forward.x, forward.z) > .1) lastHeading = Math.atan2(forward.x, forward.z);
-        forward.set(Math.sin(lastHeading), 0, Math.cos(lastHeading));
-        anchor.copy(carMesh.position).add(new THREE.Vector3(0, .025, 0));
-        desired.copy(carMesh.position).addScaledVector(forward, -CAMERA.behind); desired.y += CAMERA.height;
-        viewTarget.copy(anchor).addScaledVector(forward, CAMERA.lookAhead);
-        if (snapCamera) camera.position.copy(desired);
-        else camera.position.lerp(desired, 1 - Math.exp(-CAMERA.smoothing * dt));
-        // Clip the actual smoothed chase segment against furniture, excluding the car.
-        rayDirection.subVectors(camera.position, anchor);
+      function obstructed(from, to) {
+        rayDirection.subVectors(to, from);
         const distance = rayDirection.length();
-        if (distance > .001) {
-          raycaster.set(anchor, rayDirection.multiplyScalar(1 / distance)); raycaster.far = distance; raycaster.near = 0;
-          const hit = raycaster.intersectObjects(obstacles, false)[0];
-          if (hit) camera.position.copy(anchor).addScaledVector(rayDirection, Math.max(.01, hit.distance - .02));
+        if (distance < .001) return null;
+        raycaster.set(from, rayDirection.multiplyScalar(1 / distance)); raycaster.far = distance; raycaster.near = 0;
+        return raycaster.intersectObjects(obstacles, false)[0] || null;
+      }
+      function updateCamera(dt) {
+        if (hasFixedCamera) { camera.position.set(...fixedCamera); camera.lookAt(renderPos); return; }
+        // The forward the camera sits behind is remembered: below reverseHold (reversing) it keeps the old one.
+        if (car.vF > CAMERA.reverseHold) { camFwd.x = Math.sin(carHeading); camFwd.z = Math.cos(carHeading); }
+        const speed = Math.abs(car.vF);
+        const dist = CAMERA.dist + CAMERA.distPerSpeed * speed, lookAhead = CAMERA.lookAhead + CAMERA.lookAheadPerSpeed * speed;
+        want.set(renderPos.x - camFwd.x * dist, renderPos.y + CAMERA.height, renderPos.z - camFwd.z * dist);
+        wantLook.set(renderPos.x + camFwd.x * lookAhead, renderPos.y + CAMERA.lookHeight, renderPos.z + camFwd.z * lookAhead);
+        // Spring the body, and the aim a little tighter, so the car stays centred while the camera swings wide.
+        if (snapCamera) { camPos.copy(want); camLook.copy(wantLook); camState.clip = 1; camState.lift = 0; }
+        else { camPos.lerp(want, ease(CAMERA.spring, dt)); camLook.lerp(wantLook, ease(CAMERA.spring * CAMERA.lookSpring, dt)); }
+        // Obstruction: ray from just above the car to the sprung position. Blocked → prefer lifting over the
+        // obstacle (a desk edge when the camera trails below a desktop), else shorten to just short of the hit.
+        anchor.set(renderPos.x, renderPos.y + .025, renderPos.z);
+        let wantClip = 1, wantLift = 0;
+        const hit = obstructed(anchor, camPos);
+        if (hit) {
+          lifted.copy(camPos); lifted.y += CAMERA.lift;
+          if (!obstructed(anchor, lifted)) wantLift = 1;
+          else wantClip = Math.max(.05, (hit.distance - CAMERA.clearance) / anchor.distanceTo(camPos));
         }
-        camera.lookAt(viewTarget); snapCamera = false;
+        camState.blocked = !!hit;
+        // Hysteresis: move in (shorten / lift) quickly, move back out slowly, never frame-to-frame.
+        camState.clip += (wantClip - camState.clip) * ease(wantClip < camState.clip ? CAMERA.shortenRate : CAMERA.restoreRate, dt);
+        camState.lift += (wantLift - camState.lift) * ease(wantLift > camState.lift ? CAMERA.shortenRate : CAMERA.restoreRate, dt);
+        if (snapCamera) { camState.clip = wantClip; camState.lift = wantLift; }
+        camera.position.lerpVectors(anchor, camPos, camState.clip); camera.position.y += camState.lift * CAMERA.lift;
+        camera.lookAt(camLook); snapCamera = false;
       }
       window.addEventListener('resize', () => {
         camera.aspect = innerWidth / Math.max(1, innerHeight); camera.updateProjectionMatrix();
@@ -395,7 +452,9 @@
       world.step(); // Populate the query pipeline before the first suspension ray cast.
       // Debug hook: ?preroll=seconds advances the simulation (and any ?script) before the first frame.
       const preroll = Math.min(120, Number(params.get('preroll')) || 0);
+      resetPoses();
       for (let i = 0; i < Math.round(preroll / STEP); i++) step();
+      resetPoses();
       syncMeshes(); updateCamera(0);
       setPaused(paused);
       // Filmstrip: advance the fixed-step sim (and the camera at the fixed step, as a 60 Hz display would)
@@ -441,16 +500,16 @@
             let steps = 0;
             while (accumulator >= STEP && steps < 6) { step(); accumulator -= STEP; steps++; }
             if (steps === 6) accumulator = 0;
-            syncMeshes(); updateCamera(dt);
+            syncMeshes(accumulator / STEP); updateCamera(dt);
           }
           renderer.render(scene, camera);
           frames++; sampleTime += dt;
           if (sampleTime >= .25) {
-            meter.textContent = `${Math.abs(forwardSpeed(car)).toFixed(2)} m/s${fallback ? ' · simple room' : ''}`;
+            meter.textContent = `${Math.abs(forwardSpeed(car)).toFixed(2)} m/s${fallback ? ' · simple room' : ''}${handling !== DEFAULT_HANDLING ? ` · ${handling}` : ''}`;
             if (debug) {
               diagnostics.hidden = false;
               const p = car.body.translation();
-              diagnostics.textContent = `${Math.round(frames / sampleTime)} fps · ${renderer.info.render.calls} draws\n${renderer.info.render.triangles} triangles · ${ROOM.length} fixed · ${PROPS.length} props\nposition ${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)}\nwheel contacts ${WHEELS.map((_, i) => +car.controller.wheelIsInContact(i)).join(' ')}`;
+              diagnostics.textContent = `${Math.round(frames / sampleTime)} fps · ${renderer.info.render.calls} draws\n${renderer.info.render.triangles} triangles · ${ROOM.length} fixed · ${PROPS.length} props\nposition ${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)}\nwheel contacts ${WHEELS.map((_, i) => +car.controller.wheelIsInContact(i)).join(' ')}\nhandling ${handling} · vF ${car.vF.toFixed(2)} vL ${car.vL.toFixed(2)}${car.slipping ? ' sliding' : ''}${car.airborne ? ' airborne' : ''}\ncamera clip ${camState.clip.toFixed(2)} lift ${camState.lift.toFixed(2)}${camState.blocked ? ' blocked' : ''}`;
             }
             frames = 0; sampleTime = 0;
           }
