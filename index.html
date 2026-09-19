@@ -75,9 +75,9 @@
     <canvas id="minimap" class="hud-panel" width="448" height="368" hidden aria-label="Minimap"></canvas>
     <div id="countdown" class="hud-center" hidden aria-live="assertive">3</div>
     <div class="hud-panel hud-bc" id="title-strip" hidden><kbd>Enter</kbd> race · 3 laps vs 3 rivals</div>
-    <div class="hud-panel hud-bl" id="controls"><span><kbd>WASD / arrows</kbd> drive</span><span><kbd>Space</kbd> brake</span><span><kbd>Shift</kbd> handbrake</span><span><kbd>R</kbd> recover</span><span id="race-keys" hidden><kbd>Enter</kbd> race · <kbd>Esc</kbd> free drive</span><span><kbd>M</kbd> <span id="sound-label">sound</span></span></div>
+    <div class="hud-panel hud-bl" id="controls"><span><kbd>WASD / arrows</kbd> drive</span><span><kbd>Space</kbd> brake</span><span><kbd>Shift</kbd> handbrake</span><span><kbd>R</kbd> recover</span><span id="race-keys" hidden><kbd>Enter</kbd> race · <kbd>F</kbd> free drive</span><span><kbd>M</kbd> <span id="sound-label">sound</span></span></div>
     <a class="hud-panel hud-br" id="mode-link" href="?fallback=1">Simple room</a>
-    <div class="hud-panel hud-results" id="results" hidden role="status"><h2 id="results-title">Finished</h2><div class="time" id="results-time"></div><ol id="results-list"></ol><div class="hint"><kbd>Enter</kbd> race again · <kbd>Esc</kbd> free drive</div></div>
+    <div class="hud-panel hud-results" id="results" hidden role="status"><h2 id="results-title">Finished</h2><div class="time" id="results-time"></div><ol id="results-list"></ol><div class="hint"><kbd>Enter</kbd> race again · <kbd>F</kbd> free drive</div></div>
   </div>
   <div id="overlay"><section class="panel" id="message" role="status" aria-live="polite">
     <h2 id="status-title">Loading…</h2>
@@ -95,6 +95,7 @@
     } from './car.js';
     // Race logic (checkpoints, standings, AI line driver) is shared with check-drive.mjs through race.js.
     import { createRace, startCountdown, tickRace, updateProgress, standings, createAIDriver, carAhead, lineSpawn, nearestLinePoint } from './race.js';
+    import { mountMenu } from './menu.js';
     let THREE, RAPIER;
     // Chase camera, adapted from Joyride's camera.js (see the attribution in car.js) and scaled from its 4.6 m
     // CRUISER to the 0.12 m car by car length: dist 9 m → 1.96 lengths → 0.235, tuned to 0.26; height 3.6 m →
@@ -112,6 +113,11 @@
       clearance: .02, lift: .14, shortenRate: 24, restoreRate: 2.5,
     });
     const finiteVector = (a, n) => Array.isArray(a) && a.length === n && a.every(Number.isFinite);
+    // Front-end menu (Track B, menu.js) shows at once and the engine boots behind it. Debug and automation
+    // URLs skip it and drop straight into the game, so shot.sh and ?demo=1 behave exactly as before.
+    const autoStart = ['demo', 'script', 'cam', 'spawn', 'preroll', 'strip', 'mode', 'debug', 'nomenu'].some(k => new URLSearchParams(location.search).has(k));
+    let onMenuChange = () => {};
+    const menu = autoStart ? null : mountMenu({ statusEl: document.querySelector('#detail'), onChange: open => onMenuChange(open) });
 
     function validateData(ROOM, SPAWN, PROPS) {
       if (!Array.isArray(ROOM) || !ROOM.length) throw new Error('ROOM must be a nonempty array.');
@@ -138,6 +144,7 @@
     function showError(error) {
       failed = true;
       console.error(error);
+      menu?.close({ force: true }); // the error panel must be visible, not the menu
       overlay.hidden = false;
       statusTitle.textContent = 'The demo could not continue';
       detail.textContent = `${error.message || error}\n\nServe this directory over HTTP. Check the selected room module and network connection, then reload.`;
@@ -453,16 +460,19 @@
       let accumulator = 0, lastTime = null, snapCamera = true, simTime = 0;
       function clearInput() { held.clear(); resetRequested = false; }
       function setPaused(value) {
-        clearInput(); paused = value; accumulator = 0; lastTime = null;
-        if (value) resetPoses(); // nothing moved while paused: do not blend back toward a stale previous pose on resume
-        if (typeof audio !== 'undefined') audio[value ? 'suspend' : 'resume']();
+        // The menu is a pause state of its own: physics stays frozen while it is open and it covers the overlay.
+        const menuOpen = !!menu?.isOpen();
+        clearInput(); paused = value || menuOpen; accumulator = 0; lastTime = null;
+        if (paused) resetPoses(); // nothing moved while paused: do not blend back toward a stale previous pose on resume
+        if (typeof audio !== 'undefined') audio[paused ? 'suspend' : 'resume']();
         if (failed) return;
-        overlay.hidden = !paused;
-        if (paused) {
+        overlay.hidden = !paused || menuOpen;
+        if (paused && !menuOpen) {
           statusTitle.textContent = 'Paused'; detail.textContent = 'Focus the game to resume. Driving keys have been released.';
           actions.hidden = false; resume.hidden = false;
         }
       }
+      onMenuChange = open => { if (!open) renderer.domElement.focus(); setPaused(open); };
       window.addEventListener('keydown', e => {
         if (!drivingKeys.has(e.code) || e.target.closest?.('button, a, input, textarea')) return;
         e.preventDefault();
@@ -942,9 +952,11 @@
       resetPoses();
       if (params.get('mode') === 'race') startRace(); // ?mode=race starts on the grid at boot (composes with ?preroll/?strip)
       for (let i = 0; i < Math.round(preroll / STEP); i++) step();
+      if (menu) for (let i = 0; i < 45; i++) step(); // settle the car onto its wheels before the menu cinematic shows it
       resetPoses();
       syncMeshes(); updateCamera(0); updateHud();
       setPaused(paused);
+      menu?.setReady();
       // Filmstrip: advance the fixed-step sim (and the camera at the fixed step, as a 60 Hz display would)
       // between cells, render each cell once into its own region of an offscreen target, then blit that target
       // to the canvas every frame. (A canvas drawn once outside the regular loop is not what headless Chrome
@@ -992,6 +1004,16 @@
             stepHist[steps]++;
             if (steps === 6) accumulator = 0;
             syncMeshes(accumulator / STEP); updateCamera(dt); updateHud(); audio.update(car, dt); particles.update(dt);
+          }
+          if (menu?.isOpen()) {
+            // Cinematic: a slow, low sweep behind the parked car looking east into the office. The chase
+            // camera snaps back the moment the menu closes.
+            const t = now / 1000, p = carMesh.position, a = -Math.PI / 2 + Math.sin(t * .21) * .7, r = .40;
+            camera.position.set(p.x + Math.sin(a) * r, p.y + .10 + Math.sin(t * .33) * .015, p.z + Math.cos(a) * r);
+            const dx = p.x - camera.position.x, dz = p.z - camera.position.z, L = Math.hypot(dx, dz) || 1;
+            // Aim a little left of the car (its screen-right is (-dz, dx)/L) so it sits in the right third, clear of the title.
+            camera.lookAt(p.x + dz / L * .14 + dx / L * .12, p.y + .005, p.z - dx / L * .14 + dz / L * .12);
+            snapCamera = true;
           }
           renderer.render(scene, camera);
           frames++; sampleTime += dt;

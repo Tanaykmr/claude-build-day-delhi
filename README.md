@@ -11,7 +11,13 @@ open http://localhost:8000
 
 Serve over HTTP. `file://` does not work (multi-file module app, import map, WASM). The first load pulls Three.js and Rapier from jsDelivr; warm the cache on the demo laptop before going on stage and keep that tab open.
 
-Controls: **WASD / arrows** drive, **Space** brake, **Shift** handbrake (breaks traction for a slide; release to recover), **R** recover to spawn. Shift only acts under the `joyride` handling, which is the default. Losing window focus clears input. Reload the page to restore every prop.
+Controls: **WASD / arrows** drive, **Space** brake, **Shift** handbrake, **R** recover (in a race: back onto the racing line, progress kept), **Enter** start a race / race again, **Esc** (or **F**) back to free drive, **M** sound on/off. Shift only acts under the `joyride` handling, which is the default. Sound is synthesized in code and only starts after the first key press or click (browser autoplay rule); it pauses with the game. Losing window focus clears input. Reload the page to restore every prop.
+
+The page opens on the **menu** (`menu.js` + `menu.css`): three pages (Start, Phases, Briefing) over a live cinematic of the parked car while the engine boots behind it. **Enter** or **Drive** starts, **Esc** pauses back into the menu, **M** toggles the music, **F** fullscreen, **← →** switch pages. Music is "Pamgaea" by Kevin MacLeod (CC BY 4.0, see `audio/CREDITS.txt`); it starts on the first click or key press because browsers block autoplay, and it ducks to a low level in the game. Phases 2 and 3 are shown locked. `?nomenu=1` boots straight into the game; every debug URL below already does.
+
+## Race
+
+Press Enter (or open `/?mode=race`) for a 3-lap race against three rivals (coral, blue, lime) on the floor loop exported as `RACE` by room.js and room.fallback.js: 2×2 grid start (you start at the back), 3-2-1-GO countdown, ordered checkpoints (cutting the course does not count), live lap / position / time, north-up minimap top-right, results panel with Enter to retry. The rivals use the same car.js handling as you and follow `RACE.line`.
 
 ## URLs
 
@@ -19,13 +25,17 @@ Controls: **WASD / arrows** drive, **Space** brake, **Shift** handbrake (breaks 
 | --- | --- |
 | `/` | Full office (room.js + props.js) |
 | `/?fallback=1` | Simple tested room (room.fallback.js), no props. Selected before the live modules import, so a broken room.js cannot block it |
-| `/?debug=1` | fps, draw calls, triangle/body counts, car position, wheel contacts |
+| `/?debug=1` | fps, draw calls, triangle/body counts, car position, wheel contacts, rAF Hz, steps-per-frame histogram, physics ms/step, race phase and per-car lap/checkpoint |
 | `/?ramp=15` | Gentler ramp (default 17°). Benches shift east automatically so the approach stays 1.25 m. Any value 12–18.5 |
 | `/?detail=low` | Drops monitors, divider trim and most chairs (about 450 fewer boxes) for slow machines |
 | `/?shadows=1` | Directional shadows (off by default per the PRD) |
 | `/?handling=classic` | The previous Rapier-wheel controller, kept for comparison. Default is `joyride` (Joyride-style planar handling on top of Rapier suspension: speed-scaled steering, throttle taper, brake-before-reverse, grip/drift lateral decay, handbrake). Independent of `?fallback=1` |
 | `/?strip=N,dt` | Filmstrip: renders N frames spaced dt simulation-seconds apart into one grid, so one screenshot shows the motion of car and camera. Composes with `?script`, `?demo`, `?spawn`, `?preroll`, `?cam`. Example: `/?debug=1&strip=9,0.4&script=W:1,WA:3` |
 | `/?demo=1` | Replays the rehearsed route with the closed-loop driver from car.js; any driving key takes over |
+| `/?mode=race` | Start on the grid at boot (composes with `?preroll`, `?strip`, `?debug`) |
+| `/?ai=1` | Debug: the AI drives your car too, so you can spectate a race. Useful for results screenshots, e.g. `/?mode=race&ai=1&preroll=125` |
+| `/?menu=phases` · `/?menu=briefing` | Open the menu on that page (screenshots, deep links) |
+| `/?nomenu=1` | Skip the menu and boot straight into the game. `?demo`, `?script`, `?cam`, `?spawn`, `?preroll`, `?strip`, `?mode` and `?debug` already do |
 | `/preview.html` | Room preview harness (B track): orbit camera, view presets, live reload, lighting sliders with "copy JSON" for lighting.js |
 | `/preview.html?view=<name>` | Preset camera with all panels hidden, for screenshots. Names: `overview`, `west`, `ramp`, `crest`, `aisle`, `aisle-high`, `hero-wall`, `desk-lane`, `divider-gap`, `cabins`, `cups`, `under-desk`, `top`, `race`. Add `&noroute` to hide route markers, `&ceiling` to show the ceiling, `&race` to show the race markers in any view, `&panels=1` to keep the UI |
 
@@ -37,14 +47,14 @@ Debug automation on the live page (A track): `?cam=x,y,z`, `?spawn=x,y,z,heading
 node check-room.mjs              # live room + props: contract, bounds, ramp math, corridors, prop rest
 node check-room.mjs --fallback   # same for room.fallback.js
 node check-room.mjs --ramp=15 --detail=low
-node check-drive.mjs             # Rapier drive test, both rooms, joyride handling (default): 32 checks per pass
-node check-drive.mjs --handling=classic   # the previous controller: 26 checks
+node check-drive.mjs             # Rapier drive test, both rooms, joyride handling (default): 38 checks per pass
+node check-drive.mjs --handling=classic   # the previous controller: 32 checks
 node check-drive.mjs --live --ramp=15 --verbose
 node check-drive.mjs --trace     # per-step CSV traces to .traces/ plus jitter metrics next to the recorded classic baseline
 node check-drive.mjs --trace=straight,slide   # subset; scenarios: straight, uturn, ramp, lane, descent, reverse, slide
 ```
 
-Both check-room modes must exit 0 before a commit to room data. check-drive prints pass/fail per scenario.
+Both check-room modes must exit 0 before a commit to room data. check-drive prints pass/fail per scenario. Its r1–r3 race scenarios verify that the four-car grid settles without contact, that four AI cars lap `RACE.line` in both rooms (34–39 s, no recovery), and that checkpoint ordering holds.
 
 check-room runs the corridor and race checks on **both** rooms (room.fallback.js exports `BENCH_X`, `BENCH_Z`, `GAP_PITCH`, `RAMP_LANE_Z` for that). It also validates the enrichment and race data: every bench's gap pitch stays crossable under the desk, the race legs (north aisle, east-end turn, west-end turn) are clear, under-desk clutter stays inside the desktop footprints, the `RACE` export has 4 clear grid slots at least 0.25 m apart, checkpoints over carpet (or the driven desktop lane) with clear air above them and at least 1 m between consecutive ones, and a minimap outline inside the room bounds. It prints per-tag box counts so the instancing budget is visible.
 
@@ -53,6 +63,7 @@ check-room runs the corridor and race checks on **both** rooms (room.fallback.js
 ./capture.sh b3            # nine repeatable live views into .shots/b3-*.png: spawn, straight, under-desk, ramp foot, crest, desk lane, descent, cups, fallback
 ./capture.sh b3-proj 1024,768
 ./capture.sh joy 1024,768 "handling=joyride"   # optional third argument is appended to every URL (any query, e.g. shadows=1)
+node cdp-flow.mjs http://localhost:8000/ .shots   # headless Chrome over DevTools: menu ready → Enter drives → Esc pauses → Esc resumes, screenshots each state, fails on page errors
 ```
 
 Compare a capture set against the tagged baseline (`git tag baseline-mvp`, shots `.shots/base-*.png`) before and after any visual change.
@@ -121,8 +132,10 @@ Handling and chase-camera equations (vehicle-relative velocity, speed-scaled ste
 | File | Owner | Role |
 | --- | --- | --- |
 | `index.html`, `car.js`, `check-drive.mjs` | A | Renderer, physics loop, vehicle, input, camera, HUD, drive test |
+| `race.js` | A | Race progress (checkpoints, laps, standings), countdown clock, AI line driver; shared by index.html and check-drive.mjs |
 | `room.js`, `props.js`, `room.fallback.js` | B | Room data (fixed cuboids), dynamic props, tested simple room |
 | `lighting.js` | B | Lighting, per-tag material and emissive direction consumed by index.html |
 | `preview.html`, `check-room.mjs` | B | Preview harness (presets, lighting sliders, route and race markers), geometry / corridor / race-data checks |
-| `shot.sh`, `capture.sh` | orchestrator | Headless screenshot helper and the nine-view capture set (A may extend with a note; existing arguments never change) |
+| `shot.sh`, `capture.sh`, `cdp-flow.mjs` | orchestrator | Headless screenshot helper, the nine-view capture set and the menu-to-drive flow check (A may extend with a note; existing arguments never change) |
+| `menu.js`, `menu.css`, `audio/` | B | Front-end menu (pages, music, UI sounds, cinematic hook). index.html mounts it with one call; `?nomenu=1` and all debug URLs bypass it |
 | `prd.md` | both | The validated build spec |
