@@ -502,7 +502,8 @@ select.stm-input option { background: #0e1526; color: var(--paper); }
 .stm-toast i { width: 8px; height: 8px; border-radius: 50%; background: var(--lime); box-shadow: 0 0 10px var(--lime); }
 
 /* ---------- game HUD while the menu is open ---------- */
-body.stm-open > header, body.stm-open > footer, body.stm-open > #overlay, body.stm-open > #diagnostics { visibility: hidden !important; }
+body.stm-open > header, body.stm-open > footer, body.stm-open > #overlay, body.stm-open > #diagnostics,
+body.stm-open > #hud { visibility: hidden !important; } /* ponytail: the menu owns the screen — the HUD's minimap sat under the top-right tools */
 body.stm-open canvas { filter: saturate(1.05); }
 
 /* ---------- responsive ---------- */

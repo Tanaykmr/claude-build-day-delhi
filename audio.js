@@ -7,7 +7,7 @@
 // Everything after that is guarded: if the platform has no Web Audio, or the context refuses to start, the
 // module disables itself silently and the game plays on.
 //
-// Graph: one master gain → three buses (music, engine, fx) so the mix is set by constants rather than by
+// Graph: one master gain → four buses (music, engine, fx, amb) so the mix is set by constants rather than by
 // scattering magic numbers over the one-shots. Continuous voices (engine, tire scrub) are built once and
 // driven with setTargetAtTime (allocation-free per frame); one-shots and music notes are created per event
 // and disconnect themselves when they end.
@@ -35,18 +35,25 @@
 //   handle.event(name, { strength, pan }) → beep | go | checkpoint | lap | finish | impact | clatter | land.
 //
 // Mix. Music sits ~12 dB under the engine so it never competes with the thing the player is steering.
-export const MIX = Object.freeze({ master: .45, music: .22, engine: .62, fx: .85 });
+export const MIX = Object.freeze({ master: .45, music: .19, engine: .62, fx: .85, amb: .5 });
 const TAU = .05;            // setTargetAtTime constant: ~95% of the way there in 0.15 s
 const NOISE_SECONDS = 2;
 
 // Engine voice, scaled to a 1.2 m/s RC car: two detuned saws through a throttle-driven low-pass, the pitch
 // wrapped into three "gears" so the tone climbs, drops on the shift and climbs again (Joyride's trick).
 // An idle burble keeps a stationary car alive: the gain never reaches zero and the filter sits low.
-const ENGINE = Object.freeze({
-  maxSpeed: 1.2, idleFreq: 96, freqSpan: 250, gears: 3,
+export const ENGINE = Object.freeze({
+  maxSpeed: 1.2, idleFreq: 96, gears: 3,
+  // Each gear climbs by `gearRise`, and every upshift starts `shiftStep` higher than the last, so the tone
+  // rises across the whole speed range instead of snapping back to the bottom three times (which read as a siren).
+  gearRise: .85, shiftStep: .55,
   cutoffIdle: 520, cutoffSpan: 2300, gainIdle: .07, gainSpan: .17,
   burbleFreq: 5.5, burbleDepth: .022, // slow amplitude wobble at rest, faded out as the car moves off
+  whineMul: 4, whineGain: .055,       // electric motor whine, four orders up, led by throttle
+  rushFreq: 620, rushQ: .8, rushGain: .09, // broadband air/drivetrain rush, led by speed
 });
+// Room tone: lowpassed noise with a slow drift, so a parked car sits in a room rather than in a vacuum.
+const AMBIENCE = Object.freeze({ freq: 300, q: .7, gain: .085, driftHz: .06, driftDepth: 90 });
 // Tire scrub / brake squeal: looped noise through a narrow band-pass. Level comes from lateral speed while
 // sliding and from the service brake while stopping, so Space squeals and a handbrake slide scrubs.
 const SCRUB = Object.freeze({ freq: 1250, q: 5, slipFrom: .12, slipSpan: .35, slipGain: .3, brakeGain: .16, brakeFrom: .35 });
@@ -65,7 +72,7 @@ const MUSIC = Object.freeze({
     65, null, 69, null, 72, null, 69, null, 65, null, null, 64, 65, null, null, null,
     67, null, 71, null, 74, null, 71, null, 69, null, 67, null, 64, null, null, null,
   ],
-  noteLen: .16, leadPeak: .1, bassPeak: .16, hatPeak: .05, openHatPeak: .035,
+  noteLen: .16, leadPeak: .09, bassPeak: .15, hatPeak: .03, openHatPeak: .022,
 });
 const midiHz = m => 440 * Math.pow(2, (m - 69) / 12);
 
@@ -74,6 +81,7 @@ export function createAudio({ onState } = {}) {
     ctx: null, ok: false, muted: false, playing: false, musicPlaying: true,
     master: null, buses: { music: null, engine: null, fx: null }, noise: null,
     osc1: null, osc2: null, engFilter: null, engGain: null, burble: null, burbleGain: null, scrubGain: null,
+    whine: null, whineGain: null, rushGain: null, rushFilter: null,
     music: { step: 0, nextTime: 0, on: true },
   };
   const listeners = new Set(onState ? [onState] : []);
@@ -89,7 +97,7 @@ export function createAudio({ onState } = {}) {
     master.gain.value = a.muted ? 0 : MIX.master;
     master.connect(ctx.destination);
     a.master = master;
-    a.buses = { music: bus(ctx, a.musicPlaying ? MIX.music : 0), engine: bus(ctx, MIX.engine), fx: bus(ctx, MIX.fx) };
+    a.buses = { music: bus(ctx, a.musicPlaying ? MIX.music : 0), engine: bus(ctx, MIX.engine), fx: bus(ctx, MIX.fx), amb: bus(ctx, MIX.amb) };
 
     // One deterministic white-noise buffer shared by every noise voice and one-shot.
     const len = Math.max(1, Math.floor(ctx.sampleRate * NOISE_SECONDS));
@@ -110,6 +118,20 @@ export function createAudio({ onState } = {}) {
       o.connect(engFilter); o.start(); return o;
     };
     a.osc1 = saw(-7); a.osc2 = saw(7); a.engFilter = engFilter; a.engGain = engGain;
+    // Motor whine: a quiet square well above the fundamental, tracked to the same pitch and led by throttle.
+    const whineGain = ctx.createGain(); whineGain.gain.value = 0; whineGain.connect(a.buses.engine);
+    const whine = ctx.createOscillator();
+    whine.type = 'square'; whine.frequency.value = ENGINE.idleFreq * ENGINE.whineMul;
+    whine.connect(whineGain); whine.start();
+    a.whine = whine; a.whineGain = whineGain;
+    // Air / drivetrain rush: looped noise through a wide band-pass that opens with speed.
+    const rushGain = ctx.createGain(); rushGain.gain.value = 0; rushGain.connect(a.buses.engine);
+    const rushFilter = ctx.createBiquadFilter();
+    rushFilter.type = 'bandpass'; rushFilter.frequency.value = ENGINE.rushFreq; rushFilter.Q.value = ENGINE.rushQ;
+    rushFilter.connect(rushGain);
+    const rushSrc = ctx.createBufferSource(); rushSrc.buffer = noise; rushSrc.loop = true;
+    rushSrc.connect(rushFilter); rushSrc.start();
+    a.rushGain = rushGain; a.rushFilter = rushFilter;
     const burbleGain = ctx.createGain(); burbleGain.gain.value = ENGINE.burbleDepth; burbleGain.connect(engGain.gain);
     const burble = ctx.createOscillator(); burble.type = 'sine'; burble.frequency.value = ENGINE.burbleFreq;
     burble.connect(burbleGain); burble.start();
@@ -122,6 +144,17 @@ export function createAudio({ onState } = {}) {
     scrubFilter.connect(scrubGain);
     const src = ctx.createBufferSource(); src.buffer = noise; src.loop = true; src.connect(scrubFilter); src.start();
     a.scrubGain = scrubGain;
+
+    // Room tone: noise → lowpass → gain, with an LFO drifting the cutoff so it never reads as a static hiss.
+    const ambGain = ctx.createGain(); ambGain.gain.value = AMBIENCE.gain; ambGain.connect(a.buses.amb);
+    const ambFilter = ctx.createBiquadFilter();
+    ambFilter.type = 'lowpass'; ambFilter.frequency.value = AMBIENCE.freq; ambFilter.Q.value = AMBIENCE.q;
+    ambFilter.connect(ambGain);
+    const ambSrc = ctx.createBufferSource(); ambSrc.buffer = noise; ambSrc.loop = true;
+    ambSrc.connect(ambFilter); ambSrc.start();
+    const drift = ctx.createOscillator(); drift.type = 'sine'; drift.frequency.value = AMBIENCE.driftHz;
+    const driftGain = ctx.createGain(); driftGain.gain.value = AMBIENCE.driftDepth;
+    drift.connect(driftGain); driftGain.connect(ambFilter.frequency); drift.start();
 
     a.music.nextTime = ctx.currentTime + .12;
     a.music.step = 0;
@@ -181,7 +214,7 @@ export function createAudio({ onState } = {}) {
       const lead = MUSIC.lead[step];
       if (lead !== null && lead !== undefined) {
         note(t, midiHz(lead), MUSIC.noteLen, MUSIC.leadPeak, { type: 'square', bus: 'music', attack: .004 });
-        note(t, midiHz(lead + 12), MUSIC.noteLen * .6, MUSIC.leadPeak * .35, { type: 'square', bus: 'music', attack: .004 });
+        note(t, midiHz(lead + 12), MUSIC.noteLen * .6, MUSIC.leadPeak * .3, { type: 'triangle', bus: 'music', attack: .004 });
       }
       if (step % 2 === 0) burst(t, .03, MUSIC.hatPeak, 'highpass', 7000, 7000, .7, { bus: 'music' });
       if (step % 8 === 4) burst(t, .11, MUSIC.openHatPeak, 'highpass', 5200, 5200, .7, { bus: 'music' });
@@ -234,10 +267,14 @@ export function createAudio({ onState } = {}) {
       const speed = Math.min(1, Math.abs(car.vF) / ENGINE.maxSpeed);
       const throttle = Math.abs(car.input?.throttle ?? 0);
       const rev = .22 + speed * .78;                       // revs never fall to zero: there is always an idle
-      const geared = rev * ENGINE.gears;
-      const freq = ENGINE.idleFreq + (geared - Math.floor(geared)) * ENGINE.freqSpan * (.55 + .45 * speed);
+      const geared = rev * ENGINE.gears, gear = Math.min(ENGINE.gears - 1, Math.floor(geared)); // top gear never wraps
+      const freq = ENGINE.idleFreq * (1 + ENGINE.gearRise * (geared - gear) + ENGINE.shiftStep * gear);
       a.osc1.frequency.setTargetAtTime(freq, t, TAU);
       a.osc2.frequency.setTargetAtTime(freq, t, TAU);
+      a.whine.frequency.setTargetAtTime(freq * ENGINE.whineMul, t, TAU);
+      a.whineGain.gain.setTargetAtTime(ENGINE.whineGain * Math.max(throttle * .8, speed * .5), t, TAU);
+      a.rushFilter.frequency.setTargetAtTime(ENGINE.rushFreq * (.6 + speed), t, TAU);
+      a.rushGain.gain.setTargetAtTime(ENGINE.rushGain * speed * speed, t, TAU);
       a.engFilter.frequency.setTargetAtTime(ENGINE.cutoffIdle + ENGINE.cutoffSpan * (.25 * speed + .75 * throttle), t, TAU);
       a.engGain.gain.setTargetAtTime(ENGINE.gainIdle + ENGINE.gainSpan * Math.max(throttle, speed * .6), t, TAU);
       a.burbleGain.gain.setTargetAtTime(ENGINE.burbleDepth * (1 - speed), t, TAU); // the burble smooths out as it pulls away

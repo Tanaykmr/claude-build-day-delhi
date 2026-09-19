@@ -9,7 +9,7 @@
 //   menu.open(); menu.close({ force });
 //
 // Pages: Start · Create (photos + API key → map) · Phases · Briefing.
-// Keys while open: ← → pages · Enter primary action · Esc back / resume · M music · F fullscreen.
+// Keys while open: ← → pages · Enter primary action · Esc back / resume · M music.
 // In game: Esc reopens the menu (pause). M still toggles music.
 // URL: ?menu=create|phases|briefing opens on that page · ?map=<id> drives a saved map · ?go=1 skips the menu once ready.
 
@@ -34,7 +34,7 @@ const I = {
   down: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>',
   arrL: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>',
   arrR: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
-  full: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg>',
+  flag: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 21V4M5 4h9l-1.5 3L14 10H5"/><path d="M5 10h9"/></svg>',
   reload: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg>',
   camera: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6H8l1.5-2h5L16 6h1.5A2.5 2.5 0 0 1 20 8.5V17a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17z"/><circle cx="12" cy="12.5" r="3.5"/></svg>',
   spark: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg>',
@@ -57,7 +57,6 @@ function template({ fallback, raceHref, demoHref, fallbackHref, mapName }) {
     <div class="stm-brand"><i class="stm-flag"></i><b>Snap the Room</b><span class="stm-chip" data-chip><i></i><span data-chip-text>Map · ${esc(mapName)}</span></span></div>
     <div class="stm-tools">
       <button class="stm-icon" data-music aria-pressed="true" title="Music (M)"><span class="stm-eq"><i></i><i></i><i></i><i></i></span><span>Music</span></button>
-      <button class="stm-icon" data-full title="Fullscreen (F)">${I.full}<span>Fullscreen</span></button>
     </div>
   </div>
 
@@ -219,7 +218,7 @@ function template({ fallback, raceHref, demoHref, fallbackHref, mapName }) {
               </div>
               <div class="stm-keyrow"><span class="what">Brake</span>${keycap('Space', 'wide')}</div>
               <div class="stm-keyrow"><span class="what">Recover to spawn</span>${keycap('R', 'accent')}</div>
-              <div class="stm-keyrow"><span class="what">Menu · music · fullscreen</span>${keycap('Esc')}${keycap('M')}${keycap('F')}</div>
+              <div class="stm-keyrow"><span class="what">Menu &amp; music</span>${keycap('Esc')}${keycap('M')}</div>
             </div>
           </div>
           <div class="stm-card rv" style="--i:3">
@@ -538,7 +537,6 @@ export function mountMenu({ statusEl = null, onChange = () => {}, audio: game = 
   dots.forEach(d => d.addEventListener('click', () => go(Number(d.dataset.dot))));
   restart.addEventListener('click', () => location.reload());
   $('[data-music]').addEventListener('click', () => music.toggle());
-  $('[data-full]').addEventListener('click', () => { if (document.fullscreenElement) document.exitFullscreen?.(); else document.documentElement.requestFullscreen?.().catch(() => {}); });
   $$('button, a, .stm-phase').forEach(el => el.addEventListener('pointerenter', () => sfx.tick()));
   root.addEventListener('click', e => { if (e.target.closest?.('button, a') && !e.target.closest('[data-primary], [data-drive], [data-generate]')) sfx.tick(); });
 
@@ -566,7 +564,6 @@ export function mountMenu({ statusEl = null, onChange = () => {}, audio: game = 
         e.preventDefault();
         if (index !== 0) { sfx.back(); go(0, -1); } else if (started && ready) doClose();
         break;
-      case 'KeyF': if (!e.repeat) $('[data-full]').click(); break;
     }
   }, true);
 

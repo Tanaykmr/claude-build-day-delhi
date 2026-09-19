@@ -4,6 +4,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Snap the Room</title>
+
+  <!-- Google Analytics 4. Set GA_ID to your Measurement ID (G-XXXXXXXXXX) to switch it on; left empty, nothing loads.
+       ponytail: gtag's own snippet, no wrapper — page_view is automatic, add gtag('event', ...) calls if you want more. -->
+  <script>
+    window.GA_ID = '';
+    if (GA_ID && location.hostname !== 'localhost') {
+      window.dataLayer = window.dataLayer || [];
+      window.gtag = function () { dataLayer.push(arguments); };
+      gtag('js', new Date());
+      gtag('config', GA_ID);
+      const s = document.createElement('script');
+      s.async = true; s.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(GA_ID);
+      document.head.appendChild(s);
+    }
+  </script>
   <style>
     /* Arcade HUD after Joyride's hud.css (compact hierarchy, condensed uppercase type, translucent panels), in our
        palette: deep navy panels, yellow and lime accents, coral only for warnings. No fonts or images to load. */

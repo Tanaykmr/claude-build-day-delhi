@@ -11,9 +11,9 @@ open http://localhost:8000
 
 Serve over HTTP. `file://` does not work (multi-file module app, import map, WASM). The first load pulls Three.js and Rapier from jsDelivr; warm the cache on the demo laptop before going on stage and keep that tab open.
 
-In-game controls (the menu has its own, below): **WASD / arrows** drive, **Space** brake, **Shift** handbrake, **R** recover (in a race: back onto the racing line, progress kept), **Enter** start a race / race again, **Esc** (or **F**) back to free drive, **M** toggles all game sound. Shift only acts under the `joyride` handling, which is the default. Audio is synthesized in code (engine, tire scrub and brake squeal, impacts, countdown and lap chimes, plus a short chiptune loop under the engine) and only starts after the first key press or click; it suspends when the game pauses. A speaker glyph in the controls bar shows the state. Losing window focus clears input. Reload the page to restore every prop.
+In-game controls (the menu has its own, below): **WASD / arrows** drive, **Space** brake, **Shift** handbrake, **R** recover (in a race: back onto the racing line, progress kept), **Enter** start a race / race again, **Esc** (or **F**) back to free drive, **M** toggles all game sound. Shift only acts under the `joyride` handling, which is the default. Audio is synthesized in code (engine, tire scrub and brake squeal, impacts, countdown and lap chimes, a quiet lowpassed room tone under everything, plus a short chiptune loop under the engine) and only starts after the first key press or click; it suspends when the game pauses. A speaker glyph in the controls bar shows the state. Losing window focus clears input. Reload the page to restore every prop.
 
-The page opens on the **menu** (`menu.js` + `menu.css`): four pages (Start, Create, Phases, Briefing) over a live cinematic of the parked car while the engine boots behind it. **Enter** or **Drive** starts, **Esc** pauses back into the menu, **M** toggles the music, **F** fullscreen, **← →** switch pages. Music is "Pamgaea" by Kevin MacLeod (CC BY 4.0, see `audio/CREDITS.txt`); it starts on the first click or key press because browsers block autoplay, and it ducks to a low level in the game. Phase 4 is shown locked; the start page and the Phase 2 card link to the race. `?nomenu=1` boots straight into the game, and so do `?demo`, `?script`, `?cam`, `?spawn`, `?preroll`, `?strip`, `?mode` and `?debug`. `&go=1` is different: the menu still mounts and then closes itself once the map is ready.
+The page opens on the **menu** (`menu.js` + `menu.css`): four pages (Start, Create, Phases, Briefing) over a live cinematic of the parked car while the engine boots behind it. **Enter** or **Drive** starts, **Esc** pauses back into the menu, **M** toggles the music, **← →** switch pages. Music is "Pamgaea" by Kevin MacLeod (CC BY 4.0, see `audio/CREDITS.txt`); it starts on the first click or key press because browsers block autoplay, and it ducks to a low level in the game. Phase 4 is shown locked; the start page and the Phase 2 card link to the race. `?nomenu=1` boots straight into the game, and so do `?demo`, `?script`, `?cam`, `?spawn`, `?preroll`, `?strip`, `?mode` and `?debug`. `&go=1` is different: the menu still mounts and then closes itself once the map is ready.
 
 **Create a map** (`maps.js`): drop 5 to 10 photos of a room, paste an Anthropic API key, pick Claude Opus 5 or Sonnet 5, generate. The browser downsizes the photos and calls the Claude API directly with the official SDK (pinned on jsDelivr); Claude answers through a strict-schema tool so the layout is valid JSON, `validateMap()` repairs what it can (missing floor or walls, a spawn inside furniture) and the map is saved in `localStorage`. **Drive this map** opens `?map=<id>&go=1`. The key is sent only to `api.anthropic.com`; "remember" keeps it in this browser's `localStorage`, so treat it like any other credential on a shared machine.
 
@@ -44,9 +44,22 @@ Press Enter (or open `/?mode=race`) for a 3-lap race against three rivals (coral
 
 Debug automation on the live page (A track): `?cam=x,y,z`, `?spawn=x,y,z,heading`, `?preroll=<s>`, `?script=<timed key holds>` such as `W:3,WA:2` where each token is a set of keys held for that many seconds (`W A S D` drive, `_` = Space brake, `H` = Shift handbrake, `R` = recover). See the comments in index.html.
 
+## Analytics
+
+Google Analytics 4 is wired into `index.html` but off until you give it an ID. Paste your Measurement ID into
+`window.GA_ID` (the `<script>` just under `<title>`) and deploy:
+
+```js
+window.GA_ID = 'G-XXXXXXXXXX';
+```
+
+Empty, or on `localhost`, nothing is fetched and no cookie is set, so the headless checks and local runs stay clean.
+GA4 sends `page_view` by itself; a custom event is one call, e.g. `gtag?.('event', 'race_finished', { seconds })`.
+
 ## Headless checks
 
 ```sh
+node check-audio.mjs             # engine pitch map (no sound card needed)
 node check-room.mjs              # live room + props: contract, bounds, ramp math, corridors, prop rest
 node check-room.mjs --fallback   # same for room.fallback.js
 node check-room.mjs --ramp=15 --detail=low
@@ -144,7 +157,8 @@ Handling and chase-camera equations (vehicle-relative velocity, speed-scaled ste
 | --- | --- | --- |
 | `index.html`, `car.js`, `check-drive.mjs` | A | Renderer, physics loop, vehicle, input, camera, HUD, drive test |
 | `race.js` | A | Race progress (checkpoints, laps, standings), countdown clock, AI line driver; shared by index.html and check-drive.mjs |
-| `audio.js` | A | Synthesized engine, tire scrub, impacts and the chiptune loop |
+| `audio.js` | A | Synthesized engine, tire scrub, impacts, room tone and the chiptune loop |
+| `check-audio.mjs` | A | Engine pitch map: rises with speed, one dip per upshift, no wrap at the top gear |
 | `fx.js` | A | Drift smoke, impact dust and sparks, landing puffs, skid marks |
 | `shot-cdp.mjs` | A | DevTools-protocol screenshot used by shot.sh |
 | `room.js`, `props.js`, `room.fallback.js` | B | Room data (fixed cuboids), dynamic props, tested simple room |
