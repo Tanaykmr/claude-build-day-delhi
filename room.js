@@ -53,29 +53,37 @@ export const BENCH_X = +(-W / 2 + WALL_T / 2 + FLAT_APPROACH + FOOT_FILLET + RAM
 export const DIV_H = 0.37; // divider top y = 1.12
 const DIV_T = 0.05;
 
-// ---------- palette (prd.md §4) ----------
+// ---------- palette (prd.md §4, pushed toward Smash Karts: vivid blue, coral, orange, lime, yellow on off-white + deep navy) ----------
+// Colours are shared on purpose: instancing is per (color, tag), and the emissive map in lighting.js is
+// keyed by colour, so anything that must NOT glow may not reuse PALETTE.screen or PALETTE.fixture.
 export const PALETTE = {
-  carpet: "#4a4d52",
-  carpetAlt: "#50545a", // every other 500 mm tile row, slightly lighter
-  carpetSeam: "#3a3d42", // tile seams
-  carpetAccent: "#8a8f5a",
-  desktop: "#f2f0ec",
-  deskFrame: "#c8c8c4",
-  dividerTop: "#2b3a5c",
-  dividerLow: "#5a2430",
-  dividerFrame: "#d8d6d0",
-  heroWall: "#f0a860",
-  wall: "#f0f0ee",
+  carpet: "#343c52", // deep navy-grey (was mid grey): the floor reads as carpet, the car pops against it
+  carpetAlt: "#3a4359", // every other 500 mm tile row, slightly lighter
+  carpetSeam: "#283046", // tile seams
+  carpetAccent: "#93cc3c", // lime accent runs (was yellow-olive)
+  desktop: "#f7f5f0", // white laminate
+  deskFrame: "#d3d7dc",
+  dividerTop: "#2f6fe4", // vivid blue
+  dividerLow: "#1f2a48", // deep navy base band (was maroon)
+  dividerFrame: "#e6e4de",
+  heroWall: "#ff8a3d", // orange
+  wall: "#f5f4f0",
   ceiling: "#f4f4f2",
-  pillar: "#6b4a2f",
-  cabinGlass: "#7d8b99",
-  chair: "#1c1c1e",
-  chairBase: "#b8bcc0",
-  cpu: "#2a2a2c",
-  monitor: "#1a1a1c",
-  screen: "#2f3b52",
-  ramp: "#b8b0a4",
+  pillar: "#7a4e2d",
+  cabinGlass: "#5f9ad6", // sky-blue glass, lighter than the dividers so the far wall does not become one blue slab
+  chair: "#232b47", // deep navy, shared by cpu towers, monitor bezels, sign band
+  chairBase: "#c3c8ce",
+  cpu: "#232b47",
+  monitor: "#232b47",
+  screen: "#2c66dd", // emissive in lighting.js; unique colour so nothing else glows
+  ramp: "#f26a55", // coral: the fun part of the route is visible from spawn
   fixture: "#fbfbf6", // ceiling light troffers (emissive in lighting.js)
+  // enrichment accents (desk items, plants, bins, chairs)
+  coral: "#f26a55",
+  yellow: "#f7c948",
+  leaf: "#5fbe47",
+  pot: "#e0d6c4",
+  aqua: "#7fd1e8",
 };
 
 // ---------- the route ----------

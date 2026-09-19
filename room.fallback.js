@@ -28,32 +28,32 @@ const add = (pos, size, color, tag, rot) => {
   R.push(e);
 };
 
-add([0, -0.05, 0], [W, 0.1, D], "#4a4d52", "carpet");
+add([0, -0.05, 0], [W, 0.1, D], "#343c52", "carpet");
 // 500 mm tile grid (alternate rows + seams, layered 1/2 mm) and the spawn-aisle accent run, as in room.js
-for (let r = 0; r < D / 0.5; r += 2) add([0, -0.0495, -D / 2 + 0.25 + r * 0.5], [W, 0.101, 0.5], "#50545a", "carpet");
-for (let c = 1; c < W / 0.5; c++) add([-W / 2 + c * 0.5, -0.0485, 0], [0.02, 0.101, D], "#3a3d42", "carpet");
-add([0, -0.0475, 0], [W, 0.101, 0.5], "#8a8f5a", "carpet");
-add([0, CEIL / 2, -D / 2], [W, CEIL, 0.2], "#f0a860", "wall");
-add([0, CEIL / 2, D / 2], [W, CEIL, 0.2], "#f0f0ee", "wall");
-add([-W / 2, CEIL / 2, 0], [0.2, CEIL, D], "#f0f0ee", "wall");
-add([W / 2, CEIL / 2, 0], [0.2, CEIL, D], "#f0f0ee", "wall");
+for (let r = 0; r < D / 0.5; r += 2) add([0, -0.0495, -D / 2 + 0.25 + r * 0.5], [W, 0.101, 0.5], "#3a4359", "carpet");
+for (let c = 1; c < W / 0.5; c++) add([-W / 2 + c * 0.5, -0.0485, 0], [0.02, 0.101, D], "#283046", "carpet");
+add([0, -0.0475, 0], [W, 0.101, 0.5], "#93cc3c", "carpet");
+add([0, CEIL / 2, -D / 2], [W, CEIL, 0.2], "#ff8a3d", "wall");
+add([0, CEIL / 2, D / 2], [W, CEIL, 0.2], "#f5f4f0", "wall");
+add([-W / 2, CEIL / 2, 0], [0.2, CEIL, D], "#f5f4f0", "wall");
+add([W / 2, CEIL / 2, 0], [0.2, CEIL, D], "#f5f4f0", "wall");
 add([0, CEIL + 0.05, 0], [W, 0.1, D], "#f4f4f2", "ceiling");
 // hero-wall cues: dark sign band and a whiteboard
-add([-0.5, 2.05, -D / 2 + 0.12], [4.4, 0.55, 0.04], "#1c1c1e", "wall");
-add([-4.6, 1.55, -D / 2 + 0.12], [2.4, 1.2, 0.04], "#f2f0ec", "wall");
+add([-0.5, 2.05, -D / 2 + 0.12], [4.4, 0.55, 0.04], "#232b47", "wall");
+add([-4.6, 1.55, -D / 2 + 0.12], [2.4, 1.2, 0.04], "#f7f5f0", "wall");
 
 for (const side of [-1, 1]) {
   const z = BENCH_Z + side * 0.3;
-  add([BENCH_X, DESK_TOP - TOP_T / 2, z], [RUN_LEN, TOP_T, 0.6], "#f2f0ec", "desktop");
+  add([BENCH_X, DESK_TOP - TOP_T / 2, z], [RUN_LEN, TOP_T, 0.6], "#f7f5f0", "desktop");
   for (let s = 0; s <= 8; s++) {
     const x = X0 + s * 1.2;
     const legX = Math.max(X0 + 0.15, Math.min(X0 + RUN_LEN - 0.15, x));
-    add([legX, 0.355, z], [0.05, 0.71, 0.05], "#c8c8c4", "leg");
+    add([legX, 0.355, z], [0.05, 0.71, 0.05], "#d3d7dc", "leg");
   }
 }
 for (let s = 0; s < 8; s++) {
   if (s === 3) continue; // one clear cross-lane passage
-  add([X0 + 0.6 + s * 1.2, DESK_TOP + DIV_H / 2, BENCH_Z], [1.14, DIV_H, 0.05], "#2b3a5c", "divider");
+  add([X0 + 0.6 + s * 1.2, DESK_TOP + DIV_H / 2, BENCH_Z], [1.14, DIV_H, 0.05], "#2f6fe4", "divider");
 }
 
 // Ramp: floor → west edge of the north desktop lane (z = -1.9). Same math as room.js: every plate is
@@ -75,15 +75,15 @@ const LZ = BENCH_Z - 0.3;
 const p0 = [+(X0 - RAMP_RUN).toFixed(3), 0, LZ];
 const p1 = [X0, DESK_TOP, LZ];
 const theta = Math.atan2(p1[1] - p0[1], p1[0] - p0[0]);
-plate(p0, p1, 0.4, 0.01, "#b8b0a4", "ramp");
+plate(p0, p1, 0.4, 0.01, "#f26a55", "ramp");
 // foot fillet: half-angle entry plate, starts flush on the carpet, meets the ramp face (no lip)
 {
   const t1 = Math.tan(theta),
     t2 = Math.tan(theta / 2);
   const meetDx = (FOOT_FILLET * t2) / (t1 - t2);
-  plate([p0[0] - FOOT_FILLET, 0, LZ], [p0[0] + meetDx, meetDx * t1, LZ], 0.4, 0.01, "#b8b0a4", "ramp");
+  plate([p0[0] - FOOT_FILLET, 0, LZ], [p0[0] + meetDx, meetDx * t1, LZ], 0.4, 0.01, "#f26a55", "ramp");
 }
 // crest fillet: chord under the concave crest corner, bridges the ramp/desk seam, never above 0.75
-plate([X0 - CREST_FILLET, DESK_TOP - CREST_FILLET * Math.tan(theta), LZ], [X0 + CREST_FILLET, DESK_TOP, LZ], 0.4, 0.01, "#b8b0a4", "ramp");
+plate([X0 - CREST_FILLET, DESK_TOP - CREST_FILLET * Math.tan(theta), LZ], [X0 + CREST_FILLET, DESK_TOP, LZ], 0.4, 0.01, "#f26a55", "ramp");
 
 export const ROOM = R;

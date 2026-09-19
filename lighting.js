@@ -7,21 +7,22 @@
 export const LIGHTING = {
   // renderer
   toneMapping: "ACESFilmic", // THREE.ACESFilmicToneMapping
-  exposure: 1.1,
+  exposure: 1.05,
   pixelRatioCap: 1.5,
-  background: "#e9e4dc", // warm off-white; only visible through gaps, matches the wall tone
+  background: "#e9ecf2", // cool off-white; only visible through gaps, matches the wall tone
 
-  // sky/ground hemisphere = the "office fluorescent + carpet bounce" base fill
-  hemi: { sky: "#e6ecf5", ground: "#9a948b", intensity: 1.15 }, // bright warm-grey ground: the ceiling underside is lit mostly by this
+  // sky/ground hemisphere = the "office fluorescent + carpet bounce" base fill. Cool navy-grey ground so
+  // shaded sides go blue-grey instead of brown (the old warm ground was the source of the beige wash).
+  hemi: { sky: "#e8eefa", ground: "#7f889f", intensity: 1.1 },
 
-  // ambient floor so nothing under the desks goes black
-  ambient: { color: "#ffffff", intensity: 0.25 },
+  // ambient floor so nothing under the desks goes black (kept low: ambient is what washes colour out)
+  ambient: { color: "#ffffff", intensity: 0.18 },
 
   // key "sun": warm, from the south-east high up so the orange hero wall (north) is lit,
   // the ramp face reads as a bright plane and the white desks separate from the carpet.
   sun: {
-    color: "#fff1dc",
-    intensity: 2.2,
+    color: "#fff8ee", // near-white key: saturated paint keeps its hue instead of turning peach
+    intensity: 2.1,
     position: [6, 7, 5], // world meters; target is the room center
     castShadow: true, // preview only unless A confirms fps; PRD says start without shadows
     shadowMapSize: 2048,
@@ -32,7 +33,7 @@ export const LIGHTING = {
   },
 
   // cool fill from the north-west so the shaded sides of dividers/chairs stay blue-grey, not muddy
-  fill: { color: "#cfe0ff", intensity: 0.55, position: [-8, 4, -6] },
+  fill: { color: "#cfe0ff", intensity: 0.5, position: [-8, 4, -6] },
 
   // UP-LIGHT: a directional light from below the floor aimed at the origin, i.e. shining straight up.
   // It only reaches downward-facing faces (ceiling slab, desktop undersides, soffit) and lifts the
@@ -67,17 +68,17 @@ export const MATERIALS = {
 // no downloads. tile = 0.50 m grid; the preview draws it, A can copy the function below.
 export const CARPET = {
   tile: 0.5, // meters
-  base: "#4a4d52",
-  alt: "#50545a", // every other tile row (room.js already emits these as flat cuboids: PALETTE.carpetAlt)
-  seam: "#3a3d42", // grout line between tiles (room.js PALETTE.carpetSeam, 20 mm cuboid seams every 0.5 m)
-  fleck: "#585c62", // noise flecks
+  base: "#343c52", // = room.js PALETTE.carpet (the preview keys its textured slab off this value)
+  alt: "#3a4359", // every other tile row (room.js already emits these as flat cuboids: PALETTE.carpetAlt)
+  seam: "#283046", // grout line between tiles (room.js PALETTE.carpetSeam, 20 mm cuboid seams every 0.5 m)
+  fleck: "#414a63", // noise flecks
   seamPx: 3,
   texturePx: 256, // per tile
 };
 
 // Screen faces (tag "monitor", color = PALETTE.screen) can be emissive so monitors read as "on".
 export const EMISSIVE = {
-  "#2f3b52": { color: "#3d5a8a", intensity: 0.9 },
+  "#2c66dd": { color: "#3b7cff", intensity: 0.9 }, // monitor screens (PALETTE.screen)
   "#fbfbf6": { color: "#ffffff", intensity: 1.6 }, // ceiling light troffers (tag "ceiling") glow
   "#f4f4f2": { color: "#f4f4f2", intensity: 0.35 }, // ceiling slab: self-lit a little; nothing lights its underside
 };
