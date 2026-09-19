@@ -184,8 +184,6 @@
             : new THREE.MeshLambertMaterial({ color: hex });
           const glow = EMISSIVE[`#${hex.toString(16).padStart(6, '0')}`];
           if (glow && LIGHTING) { mat.emissive = new THREE.Color(glow.color); mat.emissiveIntensity = glow.intensity ?? 1; }
-          // The ceiling's visible face points down, so no light above it ever reaches it; let it carry its own color.
-          if (tag === 'ceiling' && LIGHTING) { mat.emissive = new THREE.Color(hex); mat.emissiveIntensity = .55; }
           materials.set(key, mat);
         }
         return materials.get(key);
