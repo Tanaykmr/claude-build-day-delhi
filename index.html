@@ -103,6 +103,7 @@
     // the host: it wires them to the car and the scene and owns no signal-processing or particle code itself.
     import { createAudio } from './audio.js';
     import { createEffects } from './fx.js';
+    import { loadMap } from './maps.js';
     let THREE, RAPIER;
     // Chase camera, adapted from Joyride's camera.js (see the attribution in car.js) and scaled from its 4.6 m
     // CRUISER to the 0.12 m car by car length: dist 9 m → 1.96 lengths → 0.235, tuned to 0.26; height 3.6 m →
@@ -170,13 +171,21 @@
       if (fallback) { modeLink.textContent = 'Full office'; modeLink.href = location.pathname; }
       const modulePath = fallback ? './room.fallback.js' : './room.js';
       let roomModule, propsModule;
-      try {
+      // ?map=<id> drives a map the user generated from photos (Track B, maps.js), stored in this browser.
+      const customId = params.get('map'), custom = customId ? loadMap(customId) : null;
+      if (customId && !custom) throw new Error(`Map "${customId}" is not saved in this browser. Open the menu's Create page to generate one, or load the built-in office.`);
+      if (custom) {
+        roomModule = { ROOM: custom.ROOM, SPAWN: custom.SPAWN };
+        propsModule = { PROPS: custom.PROPS || [] };
+      } else try {
         // Do not import live modules at all when fallback is selected.
         roomModule = await import(modulePath);
         propsModule = fallback ? { PROPS: [] } : await import('./props.js');
       } catch (error) {
         throw new Error(`Could not load ${modulePath}${fallback ? '' : ' or ./props.js'}. Track B must supply the data modules. ${error.message}`);
       }
+      const mapName = custom?.name || (fallback ? 'Simple room' : 'The Office');
+      const mapSize = custom?.size || (roomModule.W && roomModule.D ? [roomModule.W, roomModule.D] : null);
       const { ROOM } = roomModule, { PROPS } = propsModule;
       let { SPAWN } = roomModule;
       // Debug hook: ?spawn=x,y,z,heading overrides the start (and R) position for scripted screenshots.
@@ -479,7 +488,7 @@
           actions.hidden = false; resume.hidden = false;
         }
       }
-      onMenuChange = open => { if (!open) renderer.domElement.focus(); setPaused(open); };
+      onMenuChange = open => { if (!open) { renderer.domElement.focus(); hud.showHint(); } setPaused(open); };
       window.addEventListener('keydown', e => {
         if (!drivingKeys.has(e.code) || e.target.closest?.('button, a, input, textarea')) return;
         e.preventDefault();
@@ -854,7 +863,7 @@
       resetPoses();
       syncMeshes(); updateCamera(0); updateHud();
       setPaused(paused);
-      menu?.setReady();
+      menu?.setReady({ name: mapName, boxes: ROOM.length, props: PROPS.length, size: mapSize });
       // Filmstrip: advance the fixed-step sim (and the camera at the fixed step, as a 60 Hz display would)
       // between cells, render each cell once into its own region of an offscreen target, then blit that target
       // to the canvas every frame. (A canvas drawn once outside the regular loop is not what headless Chrome
@@ -912,6 +921,11 @@
             // Aim a little left of the car (its screen-right is (-dz, dx)/L) so it sits in the right third, clear of the title.
             camera.lookAt(p.x + dz / L * .14 + dx / L * .12, p.y + .005, p.z - dx / L * .14 + dz / L * .12);
             snapCamera = true;
+          }
+          {
+            const p = car.body.translation();
+            hud.update({ x: p.x, y: p.y, z: p.z, heading: lastHeading, speed: forwardSpeed(car), dt,
+              throttle: Number(down('KeyW', 'ArrowUp')) - Number(down('KeyS', 'ArrowDown')), brake: down('Space') });
           }
           renderer.render(scene, camera);
           frames++; sampleTime += dt;

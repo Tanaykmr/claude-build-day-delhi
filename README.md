@@ -13,11 +13,13 @@ Serve over HTTP. `file://` does not work (multi-file module app, import map, WAS
 
 In-game controls (the menu has its own, below): **WASD / arrows** drive, **Space** brake, **Shift** handbrake, **R** recover (in a race: back onto the racing line, progress kept), **Enter** start a race / race again, **Esc** (or **F**) back to free drive, **M** sound on/off. Shift only acts under the `joyride` handling, which is the default. Sound is synthesized in code and only starts after the first key press or click (browser autoplay rule); it pauses with the game. Losing window focus clears input. Reload the page to restore every prop.
 
-The page opens on the **menu** (`menu.js` + `menu.css`): three pages (Start, Phases, Briefing) over a live cinematic of the parked car while the engine boots behind it. **Enter** or **Drive** starts, **Esc** pauses back into the menu, **M** toggles the music, **F** fullscreen, **← →** switch pages. Music is "Pamgaea" by Kevin MacLeod (CC BY 4.0, see `audio/CREDITS.txt`); it starts on the first click or key press because browsers block autoplay, and it ducks to a low level in the game. Phase 3 is shown locked; the start page and the Phase 2 card link to the race. `?nomenu=1` boots straight into the game, and so do `?demo`, `?script`, `?cam`, `?spawn`, `?preroll`, `?strip`, `?mode` and `?debug`.
+The page opens on the **menu** (`menu.js` + `menu.css`): four pages (Start, Create, Phases, Briefing) over a live cinematic of the parked car while the engine boots behind it. **Enter** or **Drive** starts, **Esc** pauses back into the menu, **M** toggles the music, **F** fullscreen, **← →** switch pages. Music is "Pamgaea" by Kevin MacLeod (CC BY 4.0, see `audio/CREDITS.txt`); it starts on the first click or key press because browsers block autoplay, and it ducks to a low level in the game. Phase 4 is shown locked; the start page and the Phase 2 card link to the race. `?nomenu=1` boots straight into the game, and so do `?demo`, `?script`, `?cam`, `?spawn`, `?preroll`, `?strip`, `?mode`, `?map=…&go=1` and `?debug`.
+
+**Create a map** (`maps.js`): drop 5 to 10 photos of a room, paste an Anthropic API key, pick Claude Opus 5 or Sonnet 5, generate. The browser downsizes the photos and calls the Claude API directly with the official SDK (pinned on jsDelivr); Claude answers through a strict-schema tool so the layout is valid JSON, `validateMap()` repairs what it can (missing floor or walls, a spawn inside furniture) and the map is saved in `localStorage`. **Drive this map** opens `?map=<id>&go=1`. The key is sent only to `api.anthropic.com`; "remember" keeps it in this browser's `localStorage`, so treat it like any other credential on a shared machine.
 
 ## Race
 
-Press Enter (or open `/?mode=race`) for a 3-lap race against three rivals (coral, blue, lime) on the floor loop exported as `RACE` by room.js and room.fallback.js: 2×2 grid start (you start at the back), 3-2-1-GO countdown, ordered checkpoints (cutting the course does not count), live lap / position / time, north-up minimap top-right, results panel with Enter to retry. The rivals use the same car.js handling as you and follow `RACE.line`.
+Press Enter (or open `/?mode=race`) for a 3-lap race against three rivals (coral, blue, lime) on the floor loop exported as `RACE` by room.js and room.fallback.js: 2×2 grid start (you start at the back), 3-2-1-GO countdown, ordered checkpoints (cutting the course does not count), live lap / position / time, north-up minimap top-right, results panel with Enter to retry. The rivals use the same car.js handling as you and follow `RACE.line`. A generated map has no `RACE` export, so the race keys stay idle there.
 
 ## URLs
 
@@ -34,8 +36,9 @@ Press Enter (or open `/?mode=race`) for a 3-lap race against three rivals (coral
 | `/?demo=1` | Replays the rehearsed route with the closed-loop driver from car.js; any driving key takes over |
 | `/?mode=race` | Start on the grid at boot (composes with `?preroll`, `?strip`, `?debug`) |
 | `/?ai=1` | Debug: the AI drives your car too, so you can spectate a race. Useful for results screenshots, e.g. `/?mode=race&ai=1&preroll=125` |
-| `/?menu=phases` · `/?menu=briefing` | Open the menu on that page (screenshots, deep links) |
-| `/?nomenu=1` | Skip the menu and boot straight into the game. `?demo`, `?script`, `?cam`, `?spawn`, `?preroll`, `?strip`, `?mode` and `?debug` already do |
+| `/?menu=create` · `/?menu=phases` · `/?menu=briefing` | Open the menu on that page (screenshots, deep links) |
+| `/?map=<id>` | Drive a map generated on the Create page (stored in this browser). Add `&go=1` to skip the menu once loaded |
+| `/?nomenu=1` | Skip the menu and boot straight into the game. `?demo`, `?script`, `?cam`, `?spawn`, `?preroll`, `?strip`, `?mode`, `?debug` and `?map=…&go=1` already do |
 | `/preview.html` | Room preview harness (B track): orbit camera, view presets, live reload, lighting sliders with "copy JSON" for lighting.js |
 | `/preview.html?view=<name>` | Preset camera with all panels hidden, for screenshots. Names: `overview`, `west`, `ramp`, `crest`, `aisle`, `aisle-high`, `hero-wall`, `desk-lane`, `divider-gap`, `cabins`, `cups`, `under-desk`, `top`, `race`. Add `&noroute` to hide route markers, `&ceiling` to show the ceiling, `&race` to show the race markers in any view, `&panels=1` to keep the UI |
 
@@ -143,5 +146,6 @@ Handling and chase-camera equations (vehicle-relative velocity, speed-scaled ste
 | `lighting.js` | B | Lighting, per-tag material and emissive direction consumed by index.html |
 | `preview.html`, `check-room.mjs` | B | Preview harness (presets, lighting sliders, route and race markers), geometry / corridor / race-data checks |
 | `shot.sh`, `capture.sh`, `cdp-flow.mjs` | orchestrator | Headless screenshot helper, the nine-view capture set and the menu-to-drive flow check (A may extend with a note; existing arguments never change) |
-| `menu.js`, `menu.css`, `audio/` | B | Front-end menu (pages, music, UI sounds, cinematic hook). index.html mounts it with one call; `?nomenu=1` and all debug URLs bypass it |
+| `menu.js`, `menu.css`, `audio/` | B | Front-end menu (Start, Create, Phases, Briefing; music, UI sounds, cinematic hook). index.html mounts it with one call; `?nomenu=1` and all debug URLs bypass it |
+| `maps.js` | B | User maps: photo → layout generation with the Claude API (strict tool schema), validation/repair, localStorage |
 | `prd.md` | both | The validated build spec |
