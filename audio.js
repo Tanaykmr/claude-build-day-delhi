@@ -35,7 +35,7 @@
 //   handle.event(name, { strength, pan }) → beep | go | checkpoint | lap | finish | impact | clatter | land.
 //
 // Mix. Music sits ~12 dB under the engine so it never competes with the thing the player is steering.
-export const MIX = Object.freeze({ master: .45, music: .19, engine: .62, fx: .85, amb: .5 });
+export const MIX = Object.freeze({ master: .45, music: .22, engine: .62, fx: .85, amb: .5 });
 const TAU = .05;            // setTargetAtTime constant: ~95% of the way there in 0.15 s
 const NOISE_SECONDS = 2;
 
@@ -53,7 +53,9 @@ export const ENGINE = Object.freeze({
   rushFreq: 620, rushQ: .8, rushGain: .09, // broadband air/drivetrain rush, led by speed
 });
 // Room tone: lowpassed noise with a slow drift, so a parked car sits in a room rather than in a vacuum.
-const AMBIENCE = Object.freeze({ freq: 300, q: .7, gain: .085, driftHz: .06, driftDepth: 90 });
+// gain is set from a measurement at the master bus, not by ear: white noise through a lowpass this low
+// throws away most of its energy, and the first pass at .085 landed 15 dB under the threshold of notice.
+const AMBIENCE = Object.freeze({ freq: 420, q: .7, gain: .5, driftHz: .06, driftDepth: 120 });
 // Tire scrub / brake squeal: looped noise through a narrow band-pass. Level comes from lateral speed while
 // sliding and from the service brake while stopping, so Space squeals and a handbrake slide scrubs.
 const SCRUB = Object.freeze({ freq: 1250, q: 5, slipFrom: .12, slipSpan: .35, slipGain: .3, brakeGain: .16, brakeFrom: .35 });
@@ -73,6 +75,7 @@ const MUSIC = Object.freeze({
     67, null, 71, null, 74, null, 71, null, 69, null, 67, null, 64, null, null, null,
   ],
   noteLen: .16, leadPeak: .09, bassPeak: .15, hatPeak: .03, openHatPeak: .022,
+  kickPeak: .34, snarePeak: .14, snareBodyPeak: .07,
 });
 const midiHz = m => 440 * Math.pow(2, (m - 69) / 12);
 
@@ -215,6 +218,13 @@ export function createAudio({ onState } = {}) {
       if (lead !== null && lead !== undefined) {
         note(t, midiHz(lead), MUSIC.noteLen, MUSIC.leadPeak, { type: 'square', bus: 'music', attack: .004 });
         note(t, midiHz(lead + 12), MUSIC.noteLen * .6, MUSIC.leadPeak * .3, { type: 'triangle', bus: 'music', attack: .004 });
+      }
+      // Backbeat: kick on 1 and 3, snare on 2 and 4. Without these the loop was hats over a bassline,
+      // which reads as thin however good the melody is.
+      if (step % 8 === 0) note(t, 150, .18, MUSIC.kickPeak, { type: 'sine', bus: 'music', sweep: 45, attack: .002 });
+      if (step % 8 === 4) {
+        burst(t, .13, MUSIC.snarePeak, 'highpass', 1400, 1400, .7, { bus: 'music' });
+        note(t, 190, .09, MUSIC.snareBodyPeak, { type: 'triangle', bus: 'music', attack: .002 });
       }
       if (step % 2 === 0) burst(t, .03, MUSIC.hatPeak, 'highpass', 7000, 7000, .7, { bus: 'music' });
       if (step % 8 === 4) burst(t, .11, MUSIC.openHatPeak, 'highpass', 5200, 5200, .7, { bus: 'music' });

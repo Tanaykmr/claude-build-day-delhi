@@ -318,12 +318,18 @@
       }
       const groups = new Map(), roomBounds = new THREE.Box3(), floorBounds = new THREE.Box3();
       const matrix = new THREE.Matrix4();
+      // The aisle direction chevrons are carpet boxes like any other, so they are picked out of ROOM by their
+      // shape (a 0.2 m arm laid on the diagonal) and their instance slot is remembered, to be recoloured as the
+      // player takes checkpoints. ?detail=low drops them and this list simply comes out empty.
+      const CHEV_ARM = 0.2 * Math.SQRT2, chevronSlots = [];
+      const isChevronArm = e => e.tag === 'carpet' && Math.abs(e.size[0] - CHEV_ARM) < 1e-6 && Math.abs(e.size[2] - 0.06) < 1e-6;
       for (const entry of ROOM) {
         const rotation = transform(entry);
         world.createCollider(roomColliderDesc(RAPIER, entry));
         const mat = material(entry.color, entry.tag);
         if (!groups.has(mat)) { groups.set(mat, []); groups.get(mat).tag = entry.tag; }
         matrix.compose(new THREE.Vector3(...entry.pos), rotation, new THREE.Vector3(...entry.size));
+        if (isChevronArm(entry)) chevronSlots.push({ mat, index: groups.get(mat).length, x: entry.pos[0], z: entry.pos[2] });
         groups.get(mat).push(matrix.clone());
         const bounds = new THREE.Box3(new THREE.Vector3(-.5, -.5, -.5), new THREE.Vector3(.5, .5, .5)).applyMatrix4(matrix);
         roomBounds.union(bounds);
@@ -336,9 +342,10 @@
       const tint = new THREE.Color();
       let tintSeed = 1337;
       const tintRnd = () => ((tintSeed = (tintSeed * 1664525 + 1013904223) >>> 0) / 4294967296);
-      const obstacles = [];
+      const obstacles = [], meshByMaterial = new Map();
       for (const [mat, transforms] of groups) {
         const mesh = new THREE.InstancedMesh(box, mat, transforms.length);
+        meshByMaterial.set(mat, mesh);
         transforms.forEach((m, i) => mesh.setMatrixAt(i, m));
         mesh.instanceMatrix.needsUpdate = true;
         if (TINTED.has(transforms.tag)) {
@@ -620,6 +627,8 @@
         capturePoses(currPose); prevPose.forEach((pose, i) => { pose.p.copy(currPose[i].p); pose.q.copy(currPose[i].q); });
         racers.forEach(r => { captureWheels(r); r.wheelVis.suspPrev = [...r.wheelVis.suspCurr]; r.wheelVis.steerPrev = r.wheelVis.steerCurr; r.wheelVis.spinDelta = 0; });
       }
+      // The AI drives the racing line exactly and needs no help; the player does. See captureRadius in race.js.
+      const PLAYER_CAPTURE_SLACK = 2;
       // ---- race state (race.js): idle until Enter or ?mode=race ----
       let race = null;
       const hud = {
@@ -634,6 +643,34 @@
         msEl: document.querySelector('#meter'), gearEl: document.querySelector('#speedo-gear'),
       });
       if (RACE) { hud.title.hidden = false; hud.keys.hidden = false; hud.minimap.hidden = false; }
+      // ---- chevron progress lights ----
+      // Each aisle arrow is bound to the checkpoint nearest to it and turns green once that checkpoint is in
+      // the bag for the current lap, so the course tells you whether progress is actually registering. They all
+      // go back to white when the lap rolls over. This is the visible half of the capture-radius fix: the radii
+      // were tuned for the AI, and a player who went wide had no way to tell a checkpoint had been missed.
+      const CHEV_LIT = new THREE.Color(0x7ce04a), CHEV_OFF = new THREE.Color(0xffffff);
+      const chevrons = RACE ? chevronSlots.map(slot => {
+        let cp = 0, best = Infinity;
+        RACE.checkpoints.forEach((c, i) => {
+          const d = Math.hypot(c.pos[0] - slot.x, c.pos[2] - slot.z);
+          if (d < best) { best = d; cp = i; }
+        });
+        return { mesh: meshByMaterial.get(slot.mat), index: slot.index, cp };
+      }) : [];
+      for (const mesh of new Set(chevrons.map(c => c.mesh))) {
+        if (mesh.instanceColor) continue;                       // carpet is untinted, so allocate the buffer once
+        for (let i = 0; i < mesh.count; i++) mesh.setColorAt(i, CHEV_OFF);
+      }
+      let chevKey = null;
+      function paintChevrons() {
+        if (!chevrons.length) return;
+        const me = race?.cars[0];
+        const key = race ? `${me.lap}:${me.started ? me.next : -1}` : 'off';
+        if (key === chevKey) return;                            // only touched when the player's progress moves
+        chevKey = key;
+        for (const c of chevrons) c.mesh.setColorAt(c.index, me?.started && c.cp < me.next ? CHEV_LIT : CHEV_OFF);
+        for (const mesh of new Set(chevrons.map(c => c.mesh))) mesh.instanceColor.needsUpdate = true;
+      }
       const fmtTime = t => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
       function startRace() {
         if (!RACE) return;
@@ -711,7 +748,7 @@
           if (i && !race) return;
           if (needsRecovery(r.car, bounds) || r.driver?.wantsRecovery) { if (i === 0) recover(); else recoverRacer(r); }
           if (race && race.phase !== 'countdown') {
-            const ev = updateProgress(race, i, carState(r.car));
+            const ev = updateProgress(race, i, carState(r.car), i === 0 ? PLAYER_CAPTURE_SLACK : 1);
             if (i === 0 && ev) {
               if (ev === 'lap') audio.event('lap');
               if (ev === 'finish') { race.phase = 'finished'; audio.event('finish'); showResults(); }
@@ -787,6 +824,7 @@
       function updateHud(dt = 0) {
         speedo.update({ speed: forwardSpeed(car), throttle: Number(down('KeyW', 'ArrowUp')) - Number(down('KeyS', 'ArrowDown')), brake: down('Space'), dt });
         drawMinimap();
+        paintChevrons();
         if (!race) return;
         const me = race.cars[0];
         if (race.phase === 'countdown') { const n = String(Math.ceil(race.countdown)); if (hud.last.cd !== n) audio.event('beep'); set('cd', hud.countdown, n); }
@@ -800,7 +838,7 @@
       }
       // Contact effects: drift smoke, impact dust/sparks, landing puffs and skid marks (fx.js).
       const effects = createEffects({ THREE, scene });
-      if (params.has('debug')) window.__fx = effects; // ?debug exposes the pools for CDP probes (skid/particle counts)
+      if (params.has('debug')) { window.__fx = effects; window.__scene = scene; } // ?debug exposes the pools for CDP probes (skid/particle counts)
       // Impact detection from Rapier's contact manifolds after each step: per racer the summed contact impulse and the
       // mean solver contact point. Only a RISE in impulse counts as a hit (leaning on a wall is not a series of hits),
       // rate-limited to one event per 0.15 s per car. strength = impulse / (mass · top speed) = fraction of a

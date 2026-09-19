@@ -224,9 +224,9 @@ function template({ fallback, raceHref, demoHref, fallbackHref, mapName }) {
           <div class="stm-card rv" style="--i:3">
             <h3 class="t">The HUD</h3>
             <div class="stm-route">
-              <div class="stm-step"><i>1</i><div><b>Minimap</b><span>Bottom left. The world turns around the car; N marks north, diamonds mark the ramp and the cups, dots are props.</span></div></div>
+              <div class="stm-step"><i>1</i><div><b>Minimap</b><span>Top right. North is up and the room stays put; in a race it also draws the loop and rings your next checkpoint.</span></div></div>
               <div class="stm-step hot"><i>2</i><div><b>Speedometer</b><span>Bottom right. Scale speed in km/h: the 1:36 car at 1.2 m/s is doing 155. D, R, N and a red B when braking.</span></div></div>
-              <div class="stm-step"><i>3</i><div><b>Desk level</b><span>A tag on the minimap lights up when the car is up on a surface.</span></div></div>
+              <div class="stm-step"><i>3</i><div><b>Race panel</b><span>Top left. Lap, position and the running clock, once a race is under way.</span></div></div>
               <div class="stm-step"><i>4</i><div><b>Recovery</b><span>R puts the car back at spawn, heading and camera included. Reload restores every prop.</span></div></div>
             </div>
           </div>

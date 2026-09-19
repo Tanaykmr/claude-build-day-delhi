@@ -27,12 +27,27 @@ export function tickRace(race, dt) {
   return null;
 }
 // Feed a car's position; returns 'start' | 'checkpoint' | 'lap' | 'finish' when it reaches its NEXT checkpoint.
-export function updateProgress(race, i, s) {
+// `slack` widens the capture disc for this car. The radii are sized for the AI, which threads RACE.line to the
+// centimetre; measured against the ideal line a human has as little as 0.16 m of lateral room at the tightest
+// checkpoint, and missing ONE voids the whole lap, because only the next checkpoint ever counts. The player gets
+// a wider disc, capped at CAPTURE_CAP of the gap to the following checkpoint so the discs can never overlap and
+// the ordering guarantee is untouched.
+const CAPTURE_CAP = .45;
+export function captureRadius(race, index, slack = 1) {
+  const cp = race.checkpoints[index], gapTo = j => {
+    const o = race.checkpoints[((j % race.n) + race.n) % race.n];
+    return Math.hypot(o.pos[0] - cp.pos[0], o.pos[2] - cp.pos[2]);
+  };
+  // Capped against BOTH neighbours: capping only against the next one still let two adjacent discs sum past
+  // the gap between them (cp10 + cp0 did). At 0.45 of the smaller gap, any two discs sum to at most 0.9 of it.
+  return Math.min(cp.radius * slack, Math.min(gapTo(index - 1), gapTo(index + 1)) * CAPTURE_CAP);
+}
+export function updateProgress(race, i, s, slack = 1) {
   const c = race.cars[i];
   if (c.finished) return null;
   const cp = race.checkpoints[c.next];
   c.dist = Math.hypot(s.x - cp.pos[0], s.z - cp.pos[2]);
-  if (c.dist > cp.radius) return null;
+  if (c.dist > captureRadius(race, c.next, slack)) return null;
   let event = 'checkpoint';
   if (c.next === 0) {
     if (c.started) { c.lap++; c.lapTimes.push(race.clock - c.lapStart); event = 'lap'; } else event = 'start';
