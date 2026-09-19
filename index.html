@@ -5,19 +5,44 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Snap the Room</title>
   <style>
-    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    /* Arcade HUD after Joyride's hud.css (compact hierarchy, condensed uppercase type, translucent panels), in our
+       palette: deep navy panels, yellow and lime accents, coral only for warnings. No fonts or images to load. */
+    :root { color-scheme: dark; font-family: system-ui, sans-serif;
+      --ink: #fff6e6; --navy: rgba(18, 24, 44, .74); --edge: rgba(255, 246, 230, .16); --yellow: #ffc72c; --lime: #b6e34a; --coral: #ff5a3c;
+      --hud-font: "Avenir Next Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif; --hud-shadow: 0 2px 0 rgba(8, 10, 20, .45), 0 0 16px rgba(6, 8, 18, .35); }
     * { box-sizing: border-box; }
     body { margin: 0; overflow: hidden; background: #24272b; color: #fff; }
-    canvas { display: block; width: 100vw; height: 100vh; outline: none; }
-    header, footer { position: fixed; left: 24px; right: 24px; pointer-events: none; }
-    header { top: 20px; display: flex; align-items: start; justify-content: space-between; gap: 16px; }
-    h1 { margin: 0; font-size: clamp(24px, 3vw, 38px); letter-spacing: -.04em; }
+    canvas.scene { display: block; width: 100vw; height: 100vh; outline: none; }
+    #hud { position: fixed; inset: 0; pointer-events: none; user-select: none; font-family: var(--hud-font); font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--ink); }
+    #hud [hidden] { display: none !important; }
+    .hud-panel { background: var(--navy); border: 1px solid var(--edge); border-radius: 14px; box-shadow: 0 6px 22px rgba(6, 8, 18, .35); }
+    @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) { .hud-panel { backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); } }
+    .hud-tl { position: absolute; top: 20px; left: 20px; min-width: 214px; padding: 10px 18px 12px; }
+    .hud-name { font-size: 15px; line-height: 1.1; letter-spacing: .18em; color: var(--yellow); text-shadow: var(--hud-shadow); }
+    .subtitle { margin: 3px 0 0; font: 600 12px/1.2 system-ui, sans-serif; letter-spacing: 0; text-transform: none; color: #d9dde6; opacity: .85; }
+    .hud-speed-row { display: flex; align-items: baseline; gap: 7px; margin-top: 2px; }
+    #meter { font-size: 54px; line-height: 1.02; letter-spacing: .005em; font-variant-numeric: tabular-nums; text-shadow: var(--hud-shadow); }
+    .hud-unit { font-size: 13px; letter-spacing: .2em; opacity: .66; }
+    .hud-race { display: flex; gap: 16px; margin-top: 6px; font-size: 19px; text-shadow: var(--hud-shadow); }
+    .hud-race b { color: var(--lime); font-weight: 800; }
+    .hud-race .warn { color: var(--coral); }
+    #minimap { position: absolute; top: 20px; right: 20px; width: 224px; height: 184px; }
+    .hud-center { position: absolute; left: 50%; top: 30%; transform: translate(-50%, -50%); font-size: clamp(72px, 13vw, 170px); line-height: 1; color: var(--yellow); text-shadow: 0 5px 0 rgba(8, 10, 20, .45), 0 0 28px rgba(6, 8, 18, .4); }
+    .hud-center.go { color: var(--lime); }
+    .hud-bc { position: absolute; left: 50%; bottom: 86px; transform: translateX(-50%); padding: 10px 22px; font-size: 21px; white-space: nowrap; text-shadow: var(--hud-shadow); }
+    .hud-bl { position: absolute; left: 20px; bottom: 20px; padding: 9px 16px; font-size: 14px; letter-spacing: .06em; display: flex; gap: 14px; flex-wrap: wrap; max-width: calc(100vw - 200px); }
+    .hud-br { position: absolute; right: 20px; bottom: 20px; padding: 9px 16px; font-size: 14px; letter-spacing: .06em; pointer-events: auto; color: var(--ink); text-decoration: none; }
+    .hud-results { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 22px 32px 18px; min-width: 340px; text-align: center; }
+    .hud-results h2 { margin: 0; font-size: 46px; line-height: 1; color: var(--yellow); text-shadow: var(--hud-shadow); }
+    .hud-results .time { margin-top: 6px; font-size: 22px; letter-spacing: .12em; }
+    .hud-results ol { list-style: none; padding: 0; margin: 14px 0 10px; font-size: 17px; text-align: left; }
+    .hud-results li { display: flex; gap: 12px; padding: 3px 0; border-top: 1px solid var(--edge); }
+    .hud-results li b { color: var(--lime); width: 1.4em; }
+    .hud-results li span:nth-child(2) { flex: 1; }
+    .hud-results li.me { color: var(--yellow); }
+    .hud-results .hint { font-size: 13px; opacity: .78; }
     .panel { background: #171b20e8; border: 1px solid #ffffff26; border-radius: 12px; padding: 14px 18px; }
-    .subtitle { color: #c6ccd2; margin: 4px 0 0; font-size: 15px; }
-    #meter { font-variant-numeric: tabular-nums; font-size: 18px; white-space: nowrap; }
-    footer { bottom: 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-    #controls { font-size: clamp(15px, 1.7vw, 20px); }
-    kbd { font: inherit; font-weight: 650; color: #ffe19d; }
+    kbd { font: inherit; font-weight: 800; color: var(--yellow); }
     a, button { pointer-events: auto; color: #fff; }
     a:focus-visible, button:focus-visible { outline: 3px solid #ffc56b; outline-offset: 4px; }
     button { font: inherit; cursor: pointer; background: #424951; border: 1px solid #777f88; border-radius: 7px; padding: 10px 16px; }
@@ -30,7 +55,7 @@
     #actions[hidden] { display: none; }
     #diagnostics { position: fixed; top: 115px; left: 24px; white-space: pre; font: 12px monospace; pointer-events: none; }
     .strip-label { position: fixed; font: 12px monospace; color: #fff; background: #0009; padding: 2px 6px; pointer-events: none; }
-    @media (max-width: 650px) { header, footer { left: 12px; right: 12px; } footer { flex-wrap: wrap; } .panel { padding: 10px 12px; } }
+    @media (max-width: 760px) { .hud-tl, .hud-bl { left: 12px; } #minimap, .hud-br { right: 12px; } #minimap { width: 160px; height: 132px; } .hud-bl { bottom: 62px; max-width: calc(100vw - 24px); } .hud-bc { bottom: 128px; font-size: 17px; } .panel { padding: 10px 12px; } }
   </style>
   <script type="importmap">
     { "imports": {
@@ -40,14 +65,20 @@
   </script>
 </head>
 <body>
-  <header>
-    <div class="panel"><h1>Snap the Room</h1><p class="subtitle">A little car. A familiar office.</p></div>
-    <div class="panel" id="meter">0.00 m/s</div>
-  </header>
-  <footer>
-    <div class="panel" id="controls"><kbd>WASD / arrows</kbd> drive &nbsp;·&nbsp; <kbd>Space</kbd> brake &nbsp;·&nbsp; <kbd>Shift</kbd> handbrake &nbsp;·&nbsp; <kbd>R</kbd> recover</div>
-    <a class="panel" id="mode-link" href="?fallback=1">Simple room</a>
-  </footer>
+  <div id="hud">
+    <div class="hud-panel hud-tl">
+      <div class="hud-name">Snap the Room</div>
+      <p class="subtitle">A little car. A familiar office.</p>
+      <div class="hud-speed-row"><span id="meter">0.00</span><span class="hud-unit">m/s</span></div>
+      <div class="hud-race" id="race-status" hidden><span>Lap <b id="hud-lap">1/3</b></span><span>Pos <b id="hud-pos">4/4</b></span><span id="hud-time">0:00.0</span></div>
+    </div>
+    <canvas id="minimap" class="hud-panel" width="448" height="368" hidden aria-label="Minimap"></canvas>
+    <div id="countdown" class="hud-center" hidden aria-live="assertive">3</div>
+    <div class="hud-panel hud-bc" id="title-strip" hidden><kbd>Enter</kbd> race · 3 laps vs 3 rivals</div>
+    <div class="hud-panel hud-bl" id="controls"><span><kbd>WASD / arrows</kbd> drive</span><span><kbd>Space</kbd> brake</span><span><kbd>Shift</kbd> handbrake</span><span><kbd>R</kbd> recover</span><span id="race-keys" hidden><kbd>Enter</kbd> race · <kbd>Esc</kbd> free drive</span><span><kbd>M</kbd> sound</span></div>
+    <a class="hud-panel hud-br" id="mode-link" href="?fallback=1">Simple room</a>
+    <div class="hud-panel hud-results" id="results" hidden role="status"><h2 id="results-title">Finished</h2><div class="time" id="results-time"></div><ol id="results-list"></ol><div class="hint"><kbd>Enter</kbd> race again · <kbd>Esc</kbd> free drive</div></div>
+  </div>
   <div id="overlay"><section class="panel" id="message" role="status" aria-live="polite">
     <h2 id="status-title">Loading…</h2>
     <p id="detail">Starting the room and car.</p>
@@ -62,6 +93,8 @@
       CAR, STEP, WHEELS, ROOM_FRICTION, HANDLINGS, DEFAULT_HANDLING, createWorld, createCar, roomColliderDesc, stepVehicle, resetCar,
       forwardSpeed, validBody, needsRecovery, eulerToQuaternion, rampGeometry, demoPhases, createDriver, carState,
     } from './car.js';
+    // Race logic (checkpoints, standings, AI line driver) is shared with check-drive.mjs through race.js.
+    import { createRace, startCountdown, tickRace, updateProgress, standings, createAIDriver, carAhead, lineSpawn, nearestLinePoint } from './race.js';
     let THREE, RAPIER;
     // Chase camera, adapted from Joyride's camera.js (see the attribution in car.js) and scaled from its 4.6 m
     // CRUISER to the 0.12 m car by car length: dist 9 m → 1.96 lengths → 0.235, tuned to 0.26; height 3.6 m →
@@ -167,6 +200,7 @@
         renderer.shadowMap.enabled = shadows;
       }
       renderer.domElement.tabIndex = 0;
+      renderer.domElement.className = 'scene';
       renderer.domElement.setAttribute('aria-label', 'Office driving game. WASD or arrows to drive, Space to brake, Shift to slide, R to recover.');
       document.body.prepend(renderer.domElement);
       renderer.domElement.addEventListener('webglcontextlost', e => { e.preventDefault(); showError(new Error('Graphics context lost. Reload to restart.')); });
@@ -266,16 +300,13 @@
         } catch (error) { console.warn('Office textures unavailable; retaining original materials.', error); }
       }
       const car = createCar(RAPIER, world, SPAWN, { handling });
-      const carMesh = new THREE.Group();
-      scene.add(carMesh);
       // Car body in the style of Joyride's carMesh.js: a handful of tapered boxes merged into ONE vertex-coloured,
       // flat-shaded geometry (one draw call) plus two small emissive lamp meshes. Local axes: +Z front, +X left,
       // +Y up. Footprint is unchanged (len .12 × wid .055): every vertex stays inside the collider's z ±.06 and the
-      // wheels' x ±.041, so collisions are exactly what they were. Paint: vivid yellow body (distinct from the
-      // orange hero wall, the coral chairs and the lime accents), deep navy canopy, off-white hubs, dark trim.
-      const PAINT = 0xffc72c, CANOPY = 0x1b2a4a, TRIM = 0x2b2f38, HUB = 0xf4efe6, TIRE = 0x17191c, LAMP = 0xfff3c4;
-      const bodyGroup = new THREE.Group(); // receives the visual-only squat/lean; wheels stay on the physics body
-      carMesh.add(bodyGroup);
+      // wheels' x ±.041, so collisions are exactly what they were. Player paint: vivid yellow (distinct from the
+      // orange hero wall, the coral chairs and the lime accents); rivals coral, blue, lime. Navy canopy, off-white hubs.
+      const PAINTS = [0xffc72c, 0xff5a3c, 0x3b7bd9, 0x9ed43a], NAMES = ['You', 'Coral', 'Blue', 'Lime'];
+      const CANOPY = 0x1b2a4a, TRIM = 0x2b2f38, HUB = 0xf4efe6, TIRE = 0x17191c, LAMP = 0xfff3c4;
       function tinted(geo, hex) {
         const g = geo.index ? geo.toNonIndexed() : geo;
         const n = g.attributes.position.count, c = new THREE.Color(hex), arr = new Float32Array(n * 3);
@@ -296,41 +327,37 @@
         return tinted(g, hex);
       }
       const shade = (hex, f) => new THREE.Color(hex).multiplyScalar(f).getHex();
-      const parts = [
-        taperBox(.052, .016, .116, 0, -.006, 0, PAINT, .014, .006, .004, .004, .003, .002),            // tub, raked nose
-        taperBox(.044, .007, .046, 0, .0055, .024, PAINT, .014, 0, .004),                              // bonnet deck
-        taperBox(.036, .011, .040, 0, .0075, -.006, CANOPY, .012, .008, .005, .002, .001, .001),       // canopy glass
-        taperBox(.026, .003, .026, 0, .0145, -.008, PAINT, .003, .003, .002),                          // roof cap
-        taperBox(.048, .004, .014, 0, .008, -.052, PAINT, 0, .002, .002),                              // rear wing
-        taperBox(.004, .008, .004, .018, .002, -.052, TRIM), taperBox(.004, .008, .004, -.018, .002, -.052, TRIM), // wing struts
-        taperBox(.05, .006, .006, 0, -.011, .057, TRIM), taperBox(.05, .006, .006, 0, -.011, -.057, TRIM),         // bumpers
-        taperBox(.004, .005, .092, .026, -.0125, -.002, shade(PAINT, .7)), taperBox(.004, .005, .092, -.026, -.0125, -.002, shade(PAINT, .7)), // rockers
-        taperBox(.011, .006, .002, .015, -.001, .0585, TRIM), taperBox(.011, .006, .002, -.015, -.001, .0585, TRIM),   // headlight bezels
-        taperBox(.011, .005, .002, .016, .0, -.0585, TRIM), taperBox(.011, .005, .002, -.016, .0, -.0585, TRIM),       // tail bezels
-        tinted(new THREE.CylinderGeometry(.0007, .0007, .03, 5).translate(-.018, .026, -.046), TRIM),                // antenna mast
-        tinted(new THREE.SphereGeometry(.0022, 8, 6).translate(-.018, .042, -.046), 0xff3b2e),                      // antenna tip
-      ];
-      const bodyGeometry = BufferGeometryUtils.mergeGeometries(parts, false);
-      parts.forEach(g => g.dispose());
-      bodyGeometry.computeVertexNormals();
+      function buildBodyGeometry(PAINT) {
+        const parts = [
+          taperBox(.052, .016, .116, 0, -.006, 0, PAINT, .014, .006, .004, .004, .003, .002),            // tub, raked nose
+          taperBox(.044, .007, .046, 0, .0055, .024, PAINT, .014, 0, .004),                              // bonnet deck
+          taperBox(.036, .011, .040, 0, .0075, -.006, CANOPY, .012, .008, .005, .002, .001, .001),       // canopy glass
+          taperBox(.026, .003, .026, 0, .0145, -.008, PAINT, .003, .003, .002),                          // roof cap
+          taperBox(.048, .004, .014, 0, .008, -.052, PAINT, 0, .002, .002),                              // rear wing
+          taperBox(.004, .008, .004, .018, .002, -.052, TRIM), taperBox(.004, .008, .004, -.018, .002, -.052, TRIM), // wing struts
+          taperBox(.05, .006, .006, 0, -.011, .057, TRIM), taperBox(.05, .006, .006, 0, -.011, -.057, TRIM),         // bumpers
+          taperBox(.004, .005, .092, .026, -.0125, -.002, shade(PAINT, .7)), taperBox(.004, .005, .092, -.026, -.0125, -.002, shade(PAINT, .7)), // rockers
+          taperBox(.011, .006, .002, .015, -.001, .0585, TRIM), taperBox(.011, .006, .002, -.015, -.001, .0585, TRIM),   // headlight bezels
+          taperBox(.011, .005, .002, .016, .0, -.0585, TRIM), taperBox(.011, .005, .002, -.016, .0, -.0585, TRIM),       // tail bezels
+          tinted(new THREE.CylinderGeometry(.0007, .0007, .03, 5).translate(-.018, .026, -.046), TRIM),                // antenna mast
+          tinted(new THREE.SphereGeometry(.0022, 8, 6).translate(-.018, .042, -.046), 0xff3b2e),                      // antenna tip
+        ];
+        const geometry = BufferGeometryUtils.mergeGeometries(parts, false);
+        parts.forEach(g => g.dispose());
+        geometry.computeVertexNormals();
+        return geometry;
+      }
       const carMaterial = LIGHTING
         ? new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: .5, metalness: .05 })
         : new THREE.MeshLambertMaterial({ vertexColors: true });
-      const bodyMesh = new THREE.Mesh(bodyGeometry, carMaterial);
-      bodyMesh.castShadow = shadows;
-      bodyGroup.add(bodyMesh);
       // Lamps: their own materials so the tail lights can switch with the handling's brakeLight state.
       const lampMaterial = (color, emissive, intensity) => (LIGHTING ? new THREE.MeshStandardMaterial({ color, emissive, emissiveIntensity: intensity, roughness: .3 }) : new THREE.MeshLambertMaterial({ color, emissive, emissiveIntensity: intensity }));
-      const headMaterial = lampMaterial(LAMP, LAMP, 1.2), tailMaterial = lampMaterial(0x7a1414, 0xff3b2e, .15);
+      const headMaterial = lampMaterial(LAMP, LAMP, 1.2);
       const lampBox = new THREE.BoxGeometry(.009, .0045, .002);
-      for (const sx of [-1, 1]) {
-        const head = new THREE.Mesh(lampBox, headMaterial); head.position.set(sx * .015, -.001, .06); bodyGroup.add(head);
-        const tail = new THREE.Mesh(lampBox, tailMaterial); tail.position.set(sx * .016, 0, -.06); bodyGroup.add(tail);
-      }
       // Wheels: a rotationally symmetric, smooth-shaded tire and hub (so the spin itself is invisible and cannot
       // strobe: at 1.2 m/s a 14 mm tire turns 13.6 rev/s, 82° per physics step, and a flat-shaded 14-facet cylinder
       // read as a jerky wagon wheel), plus dark cross spokes on the hub that carry the rotation cue at the clamped
-      // visual rate below. One merged vertex-coloured geometry per wheel, its own smooth material.
+      // visual rate below. One merged vertex-coloured geometry shared by every wheel, its own smooth material.
       const tireGeometry = new THREE.CylinderGeometry(CAR.wheelR, CAR.wheelR, CAR.wheelWidth, 24).rotateZ(Math.PI / 2); // axle = local X
       const hubGeometry = new THREE.CylinderGeometry(CAR.wheelR * .55, CAR.wheelR * .55, CAR.wheelWidth * 1.08, 16).rotateZ(Math.PI / 2);
       const spokeA = new THREE.BoxGeometry(CAR.wheelWidth * 1.14, CAR.wheelR * .18, CAR.wheelR * .95);
@@ -344,33 +371,56 @@
       const gradient = blobContext.createRadialGradient(64, 64, 8, 64, 64, 64);
       gradient.addColorStop(0, 'rgba(0,0,0,.55)'); gradient.addColorStop(.6, 'rgba(0,0,0,.3)'); gradient.addColorStop(1, 'rgba(0,0,0,0)');
       blobContext.fillStyle = gradient; blobContext.fillRect(0, 0, 128, 128);
-      const blob = new THREE.Mesh(new THREE.PlaneGeometry(CAR.wid + 2 * CAR.wheelWidth + .05, CAR.len + .04),
-        new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(blobCanvas), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
-      blob.geometry.rotateX(-Math.PI / 2); // Plane faces +Y in car space; car forward is +Z so its long axis is Z.
-      blob.renderOrder = 1;
-      scene.add(blob);
+      const blobTexture = new THREE.CanvasTexture(blobCanvas);
+      const blobGeometry = new THREE.PlaneGeometry(CAR.wid + 2 * CAR.wheelWidth + .05, CAR.len + .04).rotateX(-Math.PI / 2); // faces +Y; car forward is +Z
       const groundRay = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
       const surfaceNormal = new THREE.Vector3(), yAxis = new THREE.Vector3(0, 1, 0), blobTilt = new THREE.Quaternion();
-      function placeBlob() {
-        const p = renderPos;
+      // One visual per racer: group (physics pose) → bodyGroup (visual squat/lean) → body + lamps; wheels on the group.
+      function createCarVisual(paint) {
+        const group = new THREE.Group(), bodyGroup = new THREE.Group();
+        group.add(bodyGroup);
+        const body = new THREE.Mesh(buildBodyGeometry(paint), carMaterial);
+        body.castShadow = shadows;
+        bodyGroup.add(body);
+        const tailMaterial = lampMaterial(0x7a1414, 0xff3b2e, .15);
+        for (const sx of [-1, 1]) {
+          const head = new THREE.Mesh(lampBox, headMaterial); head.position.set(sx * .015, -.001, .06); bodyGroup.add(head);
+          const tail = new THREE.Mesh(lampBox, tailMaterial); tail.position.set(sx * .016, 0, -.06); bodyGroup.add(tail);
+        }
+        const wheels = WHEELS.map(() => {
+          const pivot = new THREE.Group(), tire = new THREE.Mesh(wheelGeometry, wheelMaterial);
+          tire.castShadow = shadows;
+          pivot.add(tire); group.add(pivot);
+          return { pivot, tire };
+        });
+        const blob = new THREE.Mesh(blobGeometry, new THREE.MeshBasicMaterial({ map: blobTexture, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+        blob.renderOrder = 1;
+        scene.add(group, blob);
+        return { group, bodyGroup, wheels, tailMaterial, blob };
+      }
+      function placeBlob(visual, body, p, heading) {
         groundRay.origin = p;
-        const hit = world.castRayAndGetNormal(groundRay, .6, true, undefined, undefined, undefined, car.body);
-        blob.visible = !!hit;
+        const hit = world.castRayAndGetNormal(groundRay, .6, true, undefined, undefined, undefined, body);
+        visual.blob.visible = visual.group.visible && !!hit;
         if (!hit) return;
         surfaceNormal.set(hit.normal.x, hit.normal.y, hit.normal.z);
-        blob.position.set(p.x, p.y - hit.timeOfImpact, p.z).addScaledVector(surfaceNormal, .002);
-        // Lie flat on the surface, spun to the car's heading.
-        blobTilt.setFromUnitVectors(yAxis, surfaceNormal);
-        blob.quaternion.setFromAxisAngle(yAxis, carHeading).premultiply(blobTilt);
-        blob.material.opacity = Math.max(0, Math.min(1, 1.2 - (hit.timeOfImpact - .02) / .12));
+        visual.blob.position.set(p.x, p.y - hit.timeOfImpact, p.z).addScaledVector(surfaceNormal, .002);
+        blobTilt.setFromUnitVectors(yAxis, surfaceNormal); // lie flat on the surface, spun to the car's heading
+        visual.blob.quaternion.setFromAxisAngle(yAxis, heading).premultiply(blobTilt);
+        visual.blob.material.opacity = Math.max(0, Math.min(1, 1.2 - (hit.timeOfImpact - .02) / .12));
       }
-      const wheelMeshes = WHEELS.map(() => {
-        const pivot = new THREE.Group();
-        const tire = new THREE.Mesh(wheelGeometry, wheelMaterial);
-        tire.castShadow = shadows;
-        pivot.add(tire); carMesh.add(pivot);
-        return { pivot, tire };
-      });
+      // Racers: index 0 is the player; the three rivals exist from boot (same createCar/stepVehicle, same handling)
+      // but are disabled and hidden until a race starts, so the interpolation tables stay fixed-size.
+      const RACE = roomModule.RACE || null;
+      const PLAYER_SLOT = 3; // back of the 2×2 grid; rivals take slots 0..2
+      const racers = [{ car, visual: createCarVisual(PAINTS[0]), name: NAMES[0], driver: null, heading: SPAWN.heading }];
+      if (RACE) for (let i = 1; i < 4; i++) {
+        const rival = createCar(RAPIER, world, RACE.grid[i - 1], { handling });
+        rival.body.setEnabled(false);
+        const visual = createCarVisual(PAINTS[i]); visual.group.visible = false; visual.blob.visible = false;
+        racers.push({ car: rival, visual, name: NAMES[i], driver: null, heading: RACE.grid[i - 1].heading });
+      }
+      const carMesh = racers[0].visual.group;
 
       const held = new Set(), drivingKeys = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'ShiftLeft', 'ShiftRight', 'KeyR']);
       // Debug hook: ?script=W:2.5,A:0.6,WA:1,_:1,R:0.1 holds the listed keys for that many seconds of
@@ -396,8 +446,10 @@
       const geometry = rampGeometry(ROOM, roomModule);
       let demo = params.has('demo') && geometry ? createDriver(demoPhases(geometry, SPAWN)) : null;
       const subtitle = document.querySelector('.subtitle');
+      const baseSubtitle = `A little car. A familiar office.${fallback ? ' · simple room' : ''}${handling !== DEFAULT_HANDLING ? ` · ${handling} handling` : ''}`;
+      subtitle.textContent = baseSubtitle;
       if (demo) subtitle.textContent = 'Demo route playing · press any driving key to take over';
-      let resetRequested = false, paused = (script.length || demo || strip) ? false : document.hidden || !document.hasFocus();
+      let resetRequested = false, paused = (script.length || demo || strip || params.get('mode') === 'race') ? false : document.hidden || !document.hasFocus();
       let accumulator = 0, lastTime = null, snapCamera = true, simTime = 0;
       function clearInput() { held.clear(); resetRequested = false; }
       function setPaused(value) {
@@ -414,11 +466,19 @@
         if (!drivingKeys.has(e.code) || e.target.closest?.('button, a, input, textarea')) return;
         e.preventDefault();
         if (paused || failed) return;
-        if (demo) { demo = null; subtitle.textContent = 'A little car. A familiar office.'; }
+        if (demo) { demo = null; subtitle.textContent = baseSubtitle; }
         if (e.code === 'KeyR') { if (!e.repeat && !held.has(e.code)) resetRequested = true; }
         held.add(e.code);
       });
       window.addEventListener('keyup', e => { if (drivingKeys.has(e.code)) { e.preventDefault(); held.delete(e.code); } });
+      // Race / sound keys (edge-triggered, not driving keys): Enter starts or retries a race, Esc (or F) returns to
+      // free drive, M toggles sound.
+      window.addEventListener('keydown', e => {
+        if (e.repeat || paused || failed || e.target.closest?.('button, a, input, textarea')) return;
+        if (e.code === 'Enter' && RACE && (!race || race.phase === 'finished')) { e.preventDefault(); startRace(); }
+        else if ((e.code === 'Escape' || e.code === 'KeyF') && race) { e.preventDefault(); endRace(); }
+        else if (e.code === 'KeyM') { e.preventDefault(); audio.toggleMute(); }
+      });
       window.addEventListener('blur', () => setPaused(true));
       window.addEventListener('focus', () => setPaused(document.hidden));
       document.addEventListener('visibilitychange', () => setPaused(document.hidden || !document.hasFocus()));
@@ -427,7 +487,7 @@
       const down = (...codes) => codes.some(code => held.has(code) || scripted.has(code));
       // Previous/current body transforms for render interpolation: physics runs at a fixed 60 Hz, displays do
       // not. Each render blends prev→curr by the accumulator fraction (position lerp, quaternion slerp).
-      const bodies = [car.body, ...props.map(p => p.body)];
+      const bodies = [...racers.map(r => r.car.body), ...props.map(p => p.body)];
       const prevPose = bodies.map(() => ({ p: new THREE.Vector3(), q: new THREE.Quaternion() }));
       const currPose = bodies.map(() => ({ p: new THREE.Vector3(), q: new THREE.Quaternion() }));
       const renderPos = new THREE.Vector3(), renderQuat = new THREE.Quaternion();
@@ -438,62 +498,189 @@
       // wheel, steering angle, and a visual spin whose per-step increment is clamped to VISUAL_SPIN_MAX (4 rev/s;
       // faster than that a real wheel is a blur, and an unclamped 13.6 rev/s aliases against any frame rate).
       const VISUAL_SPIN_MAX = 4 * 2 * Math.PI * STEP; // rad per fixed step
-      const wheelVis = { suspPrev: WHEELS.map(() => CAR.suspRest), suspCurr: WHEELS.map(() => CAR.suspRest), steerPrev: 0, steerCurr: 0, spin: 0, spinDelta: 0 };
-      function captureWheels() {
-        for (let i = 0; i < 4; i++) wheelVis.suspCurr[i] = car.controller.wheelSuspensionLength(i) ?? CAR.suspRest;
-        wheelVis.steerCurr = car.steering;
-        wheelVis.spinDelta = Math.max(-VISUAL_SPIN_MAX, Math.min(VISUAL_SPIN_MAX, car.wheelSpinDelta));
-        wheelVis.spin = (wheelVis.spin + wheelVis.spinDelta) % (2 * Math.PI);
+      racers.forEach(r => { r.wheelVis = { suspPrev: WHEELS.map(() => CAR.suspRest), suspCurr: WHEELS.map(() => CAR.suspRest), steerPrev: 0, steerCurr: 0, spin: 0, spinDelta: 0 }; });
+      function captureWheels(r) {
+        const w = r.wheelVis;
+        for (let i = 0; i < 4; i++) w.suspCurr[i] = r.car.controller.wheelSuspensionLength(i) ?? CAR.suspRest;
+        w.steerCurr = r.car.steering;
+        w.spinDelta = Math.max(-VISUAL_SPIN_MAX, Math.min(VISUAL_SPIN_MAX, r.car.wheelSpinDelta));
+        w.spin = (w.spin + w.spinDelta) % (2 * Math.PI);
       }
       function resetPoses() {
         capturePoses(currPose); prevPose.forEach((pose, i) => { pose.p.copy(currPose[i].p); pose.q.copy(currPose[i].q); });
-        captureWheels(); wheelVis.suspPrev = [...wheelVis.suspCurr]; wheelVis.steerPrev = wheelVis.steerCurr; wheelVis.spinDelta = 0;
+        racers.forEach(r => { captureWheels(r); r.wheelVis.suspPrev = [...r.wheelVis.suspCurr]; r.wheelVis.steerPrev = r.wheelVis.steerCurr; r.wheelVis.spinDelta = 0; });
       }
-      function recover() { clearInput(); resetCar(car, SPAWN); resetPoses(); snapCamera = true; }
+      // ---- race state (race.js): idle until Enter or ?mode=race ----
+      let race = null;
+      const hud = {
+        status: document.querySelector('#race-status'), lap: document.querySelector('#hud-lap'), pos: document.querySelector('#hud-pos'), time: document.querySelector('#hud-time'),
+        countdown: document.querySelector('#countdown'), title: document.querySelector('#title-strip'), keys: document.querySelector('#race-keys'),
+        results: document.querySelector('#results'), resultsTitle: document.querySelector('#results-title'), resultsTime: document.querySelector('#results-time'), resultsList: document.querySelector('#results-list'),
+        minimap: document.querySelector('#minimap'), last: {},
+      };
+      if (RACE) { hud.title.hidden = false; hud.keys.hidden = false; hud.minimap.hidden = false; }
+      const fmtTime = t => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
+      function startRace() {
+        if (!RACE) return;
+        demo = null; clearInput();
+        race = createRace(RACE, racers.length);
+        racers.forEach((r, i) => {
+          const slot = RACE.grid[i === 0 ? PLAYER_SLOT : i - 1];
+          r.car.body.setEnabled(true); resetCar(r.car, slot); r.heading = slot.heading;
+          r.visual.group.visible = true;
+          // Debug hook: ?ai=1 lets the AI drive the player's car too (spectate; results screenshots).
+          r.driver = i ? createAIDriver(RACE.line, { pace: [1, .97, .94][i - 1] }) : params.has('ai') ? createAIDriver(RACE.line) : null;
+        });
+        startCountdown(race, 3);
+        resetPoses(); snapCamera = true; goTimer = 0;
+        hud.status.hidden = false; hud.title.hidden = true; hud.results.hidden = true; hud.countdown.hidden = false; hud.countdown.classList.remove('go');
+        subtitle.textContent = `Race · ${RACE.laps} laps · Esc for free drive`;
+        audio.event('countdown');
+      }
+      function endRace() {
+        race = null;
+        racers.forEach((r, i) => { if (i) { r.car.body.setEnabled(false); r.visual.group.visible = false; r.visual.blob.visible = false; r.driver = null; } });
+        resetCar(car, SPAWN); racers[0].heading = SPAWN.heading;
+        resetPoses(); snapCamera = true;
+        hud.status.hidden = true; hud.results.hidden = true; hud.countdown.hidden = true; hud.title.hidden = false;
+        subtitle.textContent = baseSubtitle;
+      }
+      // Recovery in a race puts the car back on the racing line just behind where it was (progress is kept).
+      function recoverRacer(r) {
+        if (race && RACE) { const s = carState(r.car); resetCar(r.car, lineSpawn(RACE.line, nearestLinePoint(RACE.line, s) - 1)); r.heading = carState(r.car).heading; }
+        else resetCar(r.car, SPAWN);
+        if (r.driver) r.driver.recovered(nearestLinePoint(RACE.line, carState(r.car)));
+      }
+      function recover() { clearInput(); recoverRacer(racers[0]); resetPoses(); snapCamera = true; }
+      let goTimer = 0, countdownShown = -1;
+      function showResults() {
+        const order = standings(race);
+        hud.resultsTitle.textContent = ['Winner!', '2nd place', '3rd place', '4th place'][order.indexOf(0)];
+        hud.resultsTime.textContent = `${fmtTime(race.cars[0].time)} · best lap ${fmtTime(Math.min(...race.cars[0].lapTimes))}`;
+        hud.resultsList.innerHTML = order.map((i, k) => `<li${i === 0 ? ' class="me"' : ''}><b>${k + 1}</b><span>${racers[i].name}</span><span>${race.cars[i].finished ? fmtTime(race.cars[i].time) : `lap ${Math.min(race.laps, race.cars[i].lap + 1)}`}</span></li>`).join('');
+        hud.results.hidden = false;
+      }
       function step() {
         advanceScript();
         if (resetRequested) recover();
         prevPose.forEach((pose, i) => { pose.p.copy(currPose[i].p); pose.q.copy(currPose[i].q); });
-        for (let i = 0; i < 4; i++) wheelVis.suspPrev[i] = wheelVis.suspCurr[i];
-        wheelVis.steerPrev = wheelVis.steerCurr;
-        if (demo && demo.done) { demo = null; subtitle.textContent = 'A little car. A familiar office.'; }
-        stepVehicle(car, demo ? demo.input(carState(car)) : {
+        racers.forEach(r => { for (let i = 0; i < 4; i++) r.wheelVis.suspPrev[i] = r.wheelVis.suspCurr[i]; r.wheelVis.steerPrev = r.wheelVis.steerCurr; });
+        if (demo && demo.done) { demo = null; subtitle.textContent = baseSubtitle; }
+        if (race) {
+          const ev = tickRace(race, STEP);
+          if (ev === 'go') { goTimer = .9; audio.event('go'); }
+          if (goTimer > 0) goTimer -= STEP;
+        }
+        const frozen = race && race.phase === 'countdown';
+        const states = racers.map(r => carState(r.car));
+        const keyboard = {
           throttle: Number(down('KeyW', 'ArrowUp')) - Number(down('KeyS', 'ArrowDown')),
           steer: Number(down('KeyA', 'ArrowLeft')) - Number(down('KeyD', 'ArrowRight')),
           brake: down('Space'),
           handbrake: down('ShiftLeft', 'ShiftRight'),
+        };
+        racers.forEach((r, i) => {
+          if (i && !race) return; // rivals are disabled outside a race
+          const input = frozen ? { throttle: 0, steer: 0, brake: true } : r.driver ? r.driver.input(states[i], carAhead(states, i)) : demo ? demo.input(states[0]) : keyboard;
+          stepVehicle(r.car, input);
         });
         world.step();
         simTime += STEP;
-        capturePoses(currPose); captureWheels();
-        if (!validBody(car.body) || props.some(p => !validBody(p.body))) throw new Error('Physics became non-finite. Reload for a clean simulation.');
-        if (needsRecovery(car, floorBounds.isEmpty() ? roomBounds : floorBounds)) recover();
+        capturePoses(currPose); racers.forEach(captureWheels);
+        if (!validBody(car.body) || props.some(p => !validBody(p.body)) || racers.some((r, i) => i && race && !validBody(r.car.body))) throw new Error('Physics became non-finite. Reload for a clean simulation.');
+        const bounds = floorBounds.isEmpty() ? roomBounds : floorBounds;
+        racers.forEach((r, i) => {
+          if (i && !race) return;
+          if (needsRecovery(r.car, bounds) || r.driver?.wantsRecovery) { if (i === 0) recover(); else recoverRacer(r); }
+          if (race && race.phase !== 'countdown') {
+            const ev = updateProgress(race, i, carState(r.car));
+            if (i === 0 && ev) {
+              if (ev === 'lap') audio.event('lap');
+              if (ev === 'finish') { race.phase = 'finished'; audio.event('finish'); showResults(); }
+              else if (ev === 'checkpoint') audio.event('checkpoint');
+            }
+          }
+        });
       }
       let carHeading = SPAWN.heading;
       // alpha = accumulator/STEP: how far the render sits between the previous and the current physics state.
+      const rp = new THREE.Vector3(), rq = new THREE.Quaternion(), rf = new THREE.Vector3();
+      function syncRacer(r, i, alpha) {
+        const v = r.visual, w = r.wheelVis;
+        if (i === 0) { rp.copy(renderPos); rq.copy(renderQuat); } else { rp.lerpVectors(prevPose[i].p, currPose[i].p, alpha); rq.slerpQuaternions(prevPose[i].q, currPose[i].q, alpha); }
+        v.group.position.copy(rp); v.group.quaternion.copy(rq);
+        v.bodyGroup.rotation.set(r.car.visPitch, 0, r.car.visRoll); // visual-only squat/lean from the handling state (clamped in car.js)
+        v.tailMaterial.emissive.setHex(r.car.brakeLight === 2 ? 0xfff1c0 : 0xff3b2e);
+        v.tailMaterial.emissiveIntensity = r.car.brakeLight ? 2.2 : .15;
+        rf.set(0, 0, 1).applyQuaternion(rq);
+        if (Math.hypot(rf.x, rf.z) > .1) r.heading = Math.atan2(rf.x, rf.z);
+        const steer = w.steerPrev + (w.steerCurr - w.steerPrev) * alpha;
+        const spin = w.spin - w.spinDelta * (1 - alpha); // back off part of the last increment: no wrap seam
+        v.wheels.forEach(({ pivot, tire }, k) => {
+          const [x, y, z] = WHEELS[k];
+          pivot.position.set(x, y - (w.suspPrev[k] + (w.suspCurr[k] - w.suspPrev[k]) * alpha), z);
+          pivot.rotation.y = k < 2 ? steer : 0;
+          tire.rotation.x = -spin;
+        });
+        placeBlob(v, r.car.body, rp, r.heading);
+      }
       function syncMeshes(alpha = 1) {
         renderPos.lerpVectors(prevPose[0].p, currPose[0].p, alpha);
         renderQuat.slerpQuaternions(prevPose[0].q, currPose[0].q, alpha);
-        carMesh.position.copy(renderPos); carMesh.quaternion.copy(renderQuat);
-        bodyGroup.rotation.set(car.visPitch, 0, car.visRoll); // visual-only squat/lean from the handling state (clamped in car.js)
-        tailMaterial.emissive.setHex(car.brakeLight === 2 ? 0xfff1c0 : 0xff3b2e);
-        tailMaterial.emissiveIntensity = car.brakeLight ? 2.2 : .15;
-        forward.set(0, 0, 1).applyQuaternion(renderQuat);
-        if (Math.hypot(forward.x, forward.z) > .1) carHeading = Math.atan2(forward.x, forward.z);
-        const steer = wheelVis.steerPrev + (wheelVis.steerCurr - wheelVis.steerPrev) * alpha;
-        const spin = wheelVis.spin - wheelVis.spinDelta * (1 - alpha); // back off part of the last increment: no wrap seam
-        wheelMeshes.forEach(({ pivot, tire }, i) => {
-          const [x, y, z] = WHEELS[i];
-          pivot.position.set(x, y - (wheelVis.suspPrev[i] + (wheelVis.suspCurr[i] - wheelVis.suspPrev[i]) * alpha), z);
-          pivot.rotation.y = i < 2 ? steer : 0;
-          tire.rotation.x = -spin;
-        });
+        racers.forEach((r, i) => { if (r.visual.group.visible) syncRacer(r, i, alpha); });
+        carHeading = racers[0].heading;
+        const offset = racers.length;
         props.forEach(({ mesh }, i) => {
-          mesh.position.lerpVectors(prevPose[i + 1].p, currPose[i + 1].p, alpha);
-          mesh.quaternion.slerpQuaternions(prevPose[i + 1].q, currPose[i + 1].q, alpha);
+          mesh.position.lerpVectors(prevPose[offset + i].p, currPose[offset + i].p, alpha);
+          mesh.quaternion.slerpQuaternions(prevPose[offset + i].q, currPose[offset + i].q, alpha);
         });
-        placeBlob();
       }
+      // ---- HUD: written only when a value changes (Joyride's pattern), minimap redrawn each frame while visible ----
+      const mm = hud.minimap.getContext('2d');
+      function drawMinimap() {
+        if (!RACE || hud.minimap.hidden) return;
+        const [minX, minZ, maxX, maxZ] = RACE.minimap.bounds, W = hud.minimap.width, H = hud.minimap.height, pad = 22;
+        const sc = Math.min((W - 2 * pad) / (maxX - minX), (H - 2 * pad) / (maxZ - minZ));
+        const ox = (W - (maxX - minX) * sc) / 2, oz = (H - (maxZ - minZ) * sc) / 2;
+        const X = x => ox + (x - minX) * sc, Z = z => oz + (z - minZ) * sc; // north (-Z) is up: smaller z → smaller canvas y
+        mm.clearRect(0, 0, W, H);
+        mm.lineWidth = 2; mm.strokeStyle = 'rgba(255,246,230,.55)'; mm.lineCap = 'round';
+        mm.beginPath();
+        for (const [x0, z0, x1, z1] of RACE.minimap.walls) { mm.moveTo(X(x0), Z(z0)); mm.lineTo(X(x1), Z(z1)); }
+        mm.stroke();
+        if (race) { // the loop, and the player's next checkpoint
+          mm.strokeStyle = 'rgba(182,227,74,.35)'; mm.lineWidth = 3; mm.beginPath();
+          RACE.line.forEach((p, i) => { if (i) mm.lineTo(X(p.pos[0]), Z(p.pos[2])); else mm.moveTo(X(p.pos[0]), Z(p.pos[2])); });
+          mm.closePath(); mm.stroke();
+          const cp = RACE.checkpoints[race.cars[0].next];
+          mm.strokeStyle = '#b6e34a'; mm.lineWidth = 3; mm.beginPath(); mm.arc(X(cp.pos[0]), Z(cp.pos[2]), Math.max(6, cp.radius * sc), 0, Math.PI * 2); mm.stroke();
+        }
+        racers.forEach((r, i) => {
+          if (!r.visual.group.visible) return;
+          const p = r.visual.group.position, rad = i ? 6 : 8;
+          mm.fillStyle = `#${PAINTS[i].toString(16).padStart(6, '0')}`;
+          mm.beginPath(); mm.arc(X(p.x), Z(p.z), rad, 0, Math.PI * 2); mm.fill();
+          if (!i) { mm.strokeStyle = '#1b2a4a'; mm.lineWidth = 2.5; mm.stroke(); mm.beginPath(); mm.moveTo(X(p.x), Z(p.z)); mm.lineTo(X(p.x + Math.sin(r.heading) * .9), Z(p.z + Math.cos(r.heading) * .9)); mm.stroke(); }
+        });
+        mm.fillStyle = 'rgba(255,246,230,.7)'; mm.font = '700 14px "Avenir Next Condensed", "Arial Narrow", Arial, sans-serif'; mm.textBaseline = 'top'; mm.fillText('N', 8, 6);
+      }
+      function set(key, el, value) { if (hud.last[key] !== value) { el.textContent = value; hud.last[key] = value; } }
+      function updateHud() {
+        drawMinimap();
+        if (!race) return;
+        const me = race.cars[0];
+        if (race.phase === 'countdown') set('cd', hud.countdown, String(Math.ceil(race.countdown)));
+        else if (goTimer > 0) { set('cd', hud.countdown, 'GO'); hud.countdown.classList.add('go'); }
+        else hud.countdown.hidden = true;
+        set('lap', hud.lap, `${Math.min(race.laps, me.lap + 1)}/${race.laps}`);
+        const order = standings(race);
+        set('pos', hud.pos, `${order.indexOf(0) + 1}/${racers.length}`);
+        set('time', hud.time, fmtTime(me.finished ? me.time : race.clock));
+        if (race.phase === 'finished' && hud.last.resultsOrder !== order.join()) { hud.last.resultsOrder = order.join(); showResults(); }
+      }
+      const audio = createAudio();
+      // Synthesized audio (A2.4). Until it lands, a silent stub keeps the hooks callable.
+      function createAudio() { return { muted: true, toggleMute() { this.muted = !this.muted; }, event() {}, update() {} }; }
       const forward = new THREE.Vector3(), anchor = new THREE.Vector3(), want = new THREE.Vector3(), wantLook = new THREE.Vector3();
       const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), camFwd = { x: Math.sin(SPAWN.heading), z: Math.cos(SPAWN.heading) };
       const rayDirection = new THREE.Vector3(), lifted = new THREE.Vector3(), raycaster = new THREE.Raycaster();
@@ -549,9 +736,10 @@
       // Debug hook: ?preroll=seconds advances the simulation (and any ?script) before the first frame.
       const preroll = Math.min(120, Number(params.get('preroll')) || 0);
       resetPoses();
+      if (params.get('mode') === 'race') startRace(); // ?mode=race starts on the grid at boot (composes with ?preroll/?strip)
       for (let i = 0; i < Math.round(preroll / STEP); i++) step();
       resetPoses();
-      syncMeshes(); updateCamera(0);
+      syncMeshes(); updateCamera(0); updateHud();
       setPaused(paused);
       // Filmstrip: advance the fixed-step sim (and the camera at the fixed step, as a 60 Hz display would)
       // between cells, render each cell once into its own region of an offscreen target, then blit that target
@@ -560,7 +748,7 @@
       function renderStrip() {
         const cols = Math.ceil(Math.sqrt(strip.frames)), rows = Math.ceil(strip.frames / cols);
         const W = innerWidth, H = innerHeight, cw = Math.floor(W / cols), ch = Math.floor(H / rows), pr = renderer.getPixelRatio();
-        document.querySelectorAll('header, footer').forEach(e => { e.style.display = 'none'; }); // author CSS sets display:flex, so [hidden] alone would not win
+        document.querySelector('#hud').style.display = 'none';
         const target = new THREE.WebGLRenderTarget(Math.round(W * pr), Math.round(H * pr), { samples: 4, type: THREE.HalfFloatType });
         target.scissorTest = true;
         camera.aspect = cw / ch; camera.updateProjectionMatrix();
@@ -599,16 +787,16 @@
             if (steps) { stepMs += performance.now() - t0; stepCount += steps; }
             stepHist[steps]++;
             if (steps === 6) accumulator = 0;
-            syncMeshes(accumulator / STEP); updateCamera(dt);
+            syncMeshes(accumulator / STEP); updateCamera(dt); updateHud(); audio.update(car, dt);
           }
           renderer.render(scene, camera);
           frames++; sampleTime += dt;
           if (sampleTime >= .25) {
-            meter.textContent = `${Math.abs(forwardSpeed(car)).toFixed(2)} m/s${fallback ? ' · simple room' : ''}${handling !== DEFAULT_HANDLING ? ` · ${handling}` : ''}`;
+            meter.textContent = Math.abs(forwardSpeed(car)).toFixed(2);
             if (debug) {
               diagnostics.hidden = false;
               const p = car.body.translation();
-              diagnostics.textContent = `${Math.round(frames / sampleTime)} fps · ${renderer.info.render.calls} draws\n${renderer.info.render.triangles} triangles · ${ROOM.length} fixed · ${PROPS.length} props\nposition ${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)}\nwheel contacts ${WHEELS.map((_, i) => +car.controller.wheelIsInContact(i)).join(' ')}\nhandling ${handling} · vF ${car.vF.toFixed(2)} vL ${car.vL.toFixed(2)}${car.slipping ? ' sliding' : ''}${car.airborne ? ' airborne' : ''}\ncamera clip ${camState.clip.toFixed(2)} lift ${camState.lift.toFixed(2)}${camState.blocked ? ' blocked' : ''}\nrAF ${Math.round(frames / sampleTime)} Hz · steps/frame 0:${stepHist[0]} 1:${stepHist[1]} 2:${stepHist[2]}${stepHist.slice(3).some(Boolean) ? ` 3+:${stepHist.slice(3).reduce((a, b) => a + b, 0)}` : ''} · physics ${stepCount ? (stepMs / stepCount).toFixed(2) : '–'} ms/step`;
+              diagnostics.textContent = `${Math.round(frames / sampleTime)} fps · ${renderer.info.render.calls} draws\n${renderer.info.render.triangles} triangles · ${ROOM.length} fixed · ${PROPS.length} props\nposition ${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)}\nwheel contacts ${WHEELS.map((_, i) => +car.controller.wheelIsInContact(i)).join(' ')}\nhandling ${handling} · vF ${car.vF.toFixed(2)} vL ${car.vL.toFixed(2)}${car.slipping ? ' sliding' : ''}${car.airborne ? ' airborne' : ''}\ncamera clip ${camState.clip.toFixed(2)} lift ${camState.lift.toFixed(2)}${camState.blocked ? ' blocked' : ''}${race ? `\nrace ${race.phase} clock ${race.clock.toFixed(1)} · ${racers.map((r, i) => `${r.name} L${race.cars[i].lap} cp${race.cars[i].next}${r.driver ? ` s${r.driver.stuckCount}` : ''}`).join(' · ')}` : ''}\nrAF ${Math.round(frames / sampleTime)} Hz · steps/frame 0:${stepHist[0]} 1:${stepHist[1]} 2:${stepHist[2]}${stepHist.slice(3).some(Boolean) ? ` 3+:${stepHist.slice(3).reduce((a, b) => a + b, 0)}` : ''} · physics ${stepCount ? (stepMs / stepCount).toFixed(2) : '–'} ms/step`;
             }
             frames = 0; sampleTime = 0; stepHist.fill(0); stepMs = 0; stepCount = 0;
           }
