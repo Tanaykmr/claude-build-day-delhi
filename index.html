@@ -143,8 +143,9 @@
       const strip = stripArg.length === 2 && stripArg.every(Number.isFinite) && stripArg[0] >= 1
         ? { frames: Math.min(64, Math.round(stripArg[0])), dt: Math.max(STEP, stripArg[1]) } : null;
       detail.textContent = 'Loading renderer and physics…';
-      [THREE, { default: RAPIER }] = await Promise.all([
-        import('three'), import('https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.14.0/+esm'),
+      let BufferGeometryUtils;
+      [THREE, BufferGeometryUtils, { default: RAPIER }] = await Promise.all([
+        import('three'), import('three/addons/utils/BufferGeometryUtils.js'), import('https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.14.0/+esm'),
       ]);
       await RAPIER.init();
       // Track B's lighting/material direction is pure data. If it fails to load, keep flat lights so the demo still boots.
@@ -254,16 +255,70 @@
       const car = createCar(RAPIER, world, SPAWN, { handling });
       const carMesh = new THREE.Group();
       scene.add(carMesh);
-      function carBox(size, pos, color, tag = 'cup') {
-        const mesh = new THREE.Mesh(box, material(color, tag));
-        mesh.castShadow = shadows;
-        mesh.scale.set(...size); mesh.position.set(...pos); carMesh.add(mesh);
+      // Car body in the style of Joyride's carMesh.js: a handful of tapered boxes merged into ONE vertex-coloured,
+      // flat-shaded geometry (one draw call) plus two small emissive lamp meshes. Local axes: +Z front, +X left,
+      // +Y up. Footprint is unchanged (len .12 × wid .055): every vertex stays inside the collider's z ±.06 and the
+      // wheels' x ±.041, so collisions are exactly what they were. Paint: vivid yellow body (distinct from the
+      // orange hero wall, the coral chairs and the lime accents), deep navy canopy, off-white hubs, dark trim.
+      const PAINT = 0xffc72c, CANOPY = 0x1b2a4a, TRIM = 0x2b2f38, HUB = 0xf4efe6, TIRE = 0x17191c, LAMP = 0xfff3c4;
+      const bodyGroup = new THREE.Group(); // receives the visual-only squat/lean; wheels stay on the physics body
+      carMesh.add(bodyGroup);
+      function tinted(geo, hex) {
+        const g = geo.index ? geo.toNonIndexed() : geo;
+        const n = g.attributes.position.count, c = new THREE.Color(hex), arr = new Float32Array(n * 3);
+        for (let i = 0; i < n; i++) { arr[i * 3] = c.r; arr[i * 3 + 1] = c.g; arr[i * 3 + 2] = c.b; }
+        g.setAttribute('color', new THREE.Float32BufferAttribute(arr, 3));
+        return g;
       }
-      carBox([CAR.wid, CAR.hgt, CAR.len], [0, CAR.colliderY, 0], '#ffc45d');
-      carBox([.042, .014, .042], [0, .015, -.012], '#24364b', 'cabin');
-      carBox([.04, .004, .009], [0, .009, .052], '#fff3cc'); // Front marks +Z.
-      const wheelGeometry = new THREE.CylinderGeometry(CAR.wheelR, CAR.wheelR, CAR.wheelWidth, 12);
-      wheelGeometry.rotateZ(Math.PI / 2); // Cylinder axle is local X.
+      // A box whose top and bottom faces are pulled inward independently at the front (+Z), back (-Z) and sides
+      // (±X): the whole silhouette vocabulary (raked nose, canopy, spoiler) comes from this one primitive.
+      function taperBox(w, h, d, x, y, z, hex, fiT = 0, biT = 0, siT = 0, fiB = 0, biB = 0, siB = 0) {
+        const g = new THREE.BoxGeometry(w, h, d).toNonIndexed(), p = g.attributes.position.array;
+        for (let i = 0; i < p.length; i += 3) {
+          const top = p[i + 1] > 0, fi = top ? fiT : fiB, bi = top ? biT : biB, si = top ? siT : siB;
+          if (p[i + 2] > 0) p[i + 2] -= fi; else p[i + 2] += bi;
+          if (p[i] > 0) p[i] -= si; else p[i] += si;
+        }
+        g.translate(x, y, z);
+        return tinted(g, hex);
+      }
+      const shade = (hex, f) => new THREE.Color(hex).multiplyScalar(f).getHex();
+      const parts = [
+        taperBox(.052, .016, .116, 0, -.006, 0, PAINT, .014, .006, .004, .004, .003, .002),            // tub, raked nose
+        taperBox(.044, .007, .046, 0, .0055, .024, PAINT, .014, 0, .004),                              // bonnet deck
+        taperBox(.036, .011, .040, 0, .0075, -.006, CANOPY, .012, .008, .005, .002, .001, .001),       // canopy glass
+        taperBox(.026, .003, .026, 0, .0145, -.008, PAINT, .003, .003, .002),                          // roof cap
+        taperBox(.048, .004, .014, 0, .008, -.052, PAINT, 0, .002, .002),                              // rear wing
+        taperBox(.004, .008, .004, .018, .002, -.052, TRIM), taperBox(.004, .008, .004, -.018, .002, -.052, TRIM), // wing struts
+        taperBox(.05, .006, .006, 0, -.011, .057, TRIM), taperBox(.05, .006, .006, 0, -.011, -.057, TRIM),         // bumpers
+        taperBox(.004, .005, .092, .026, -.0125, -.002, shade(PAINT, .7)), taperBox(.004, .005, .092, -.026, -.0125, -.002, shade(PAINT, .7)), // rockers
+        taperBox(.011, .006, .002, .015, -.001, .0585, TRIM), taperBox(.011, .006, .002, -.015, -.001, .0585, TRIM),   // headlight bezels
+        taperBox(.011, .005, .002, .016, .0, -.0585, TRIM), taperBox(.011, .005, .002, -.016, .0, -.0585, TRIM),       // tail bezels
+        tinted(new THREE.CylinderGeometry(.0007, .0007, .03, 5).translate(-.018, .026, -.046), TRIM),                // antenna mast
+        tinted(new THREE.SphereGeometry(.0022, 8, 6).translate(-.018, .042, -.046), 0xff3b2e),                      // antenna tip
+      ];
+      const bodyGeometry = BufferGeometryUtils.mergeGeometries(parts, false);
+      parts.forEach(g => g.dispose());
+      bodyGeometry.computeVertexNormals();
+      const carMaterial = LIGHTING
+        ? new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: .5, metalness: .05 })
+        : new THREE.MeshLambertMaterial({ vertexColors: true });
+      const bodyMesh = new THREE.Mesh(bodyGeometry, carMaterial);
+      bodyMesh.castShadow = shadows;
+      bodyGroup.add(bodyMesh);
+      // Lamps: their own materials so the tail lights can switch with the handling's brakeLight state.
+      const lampMaterial = (color, emissive, intensity) => (LIGHTING ? new THREE.MeshStandardMaterial({ color, emissive, emissiveIntensity: intensity, roughness: .3 }) : new THREE.MeshLambertMaterial({ color, emissive, emissiveIntensity: intensity }));
+      const headMaterial = lampMaterial(LAMP, LAMP, 1.2), tailMaterial = lampMaterial(0x7a1414, 0xff3b2e, .15);
+      const lampBox = new THREE.BoxGeometry(.009, .0045, .002);
+      for (const sx of [-1, 1]) {
+        const head = new THREE.Mesh(lampBox, headMaterial); head.position.set(sx * .015, -.001, .06); bodyGroup.add(head);
+        const tail = new THREE.Mesh(lampBox, tailMaterial); tail.position.set(sx * .016, 0, -.06); bodyGroup.add(tail);
+      }
+      // Wheels: tire plus a slightly wider off-white hub disc, one merged vertex-coloured geometry per wheel.
+      const tireGeometry = new THREE.CylinderGeometry(CAR.wheelR, CAR.wheelR, CAR.wheelWidth, 14).rotateZ(Math.PI / 2); // axle = local X
+      const hubGeometry = new THREE.CylinderGeometry(CAR.wheelR * .55, CAR.wheelR * .55, CAR.wheelWidth * 1.08, 10).rotateZ(Math.PI / 2);
+      const wheelGeometry = BufferGeometryUtils.mergeGeometries([tinted(tireGeometry, TIRE), tinted(hubGeometry, HUB)], false);
+      wheelGeometry.computeVertexNormals();
       // Cheap grounding shadow: a soft dark ellipse laid on whatever surface is under the car (ray cast down).
       const blobCanvas = document.createElement('canvas'); blobCanvas.width = blobCanvas.height = 128;
       const blobContext = blobCanvas.getContext('2d');
@@ -292,7 +347,8 @@
       }
       const wheelMeshes = WHEELS.map(() => {
         const pivot = new THREE.Group();
-        const tire = new THREE.Mesh(wheelGeometry, material('#17191c', 'chair'));
+        const tire = new THREE.Mesh(wheelGeometry, carMaterial);
+        tire.castShadow = shadows;
         pivot.add(tire); carMesh.add(pivot);
         return { pivot, tire };
       });
@@ -384,6 +440,9 @@
         renderPos.lerpVectors(prevPose[0].p, currPose[0].p, alpha);
         renderQuat.slerpQuaternions(prevPose[0].q, currPose[0].q, alpha);
         carMesh.position.copy(renderPos); carMesh.quaternion.copy(renderQuat);
+        bodyGroup.rotation.set(car.visPitch, 0, car.visRoll); // visual-only squat/lean from the handling state (clamped in car.js)
+        tailMaterial.emissive.setHex(car.brakeLight === 2 ? 0xfff1c0 : 0xff3b2e);
+        tailMaterial.emissiveIntensity = car.brakeLight ? 2.2 : .15;
         forward.set(0, 0, 1).applyQuaternion(renderQuat);
         if (Math.hypot(forward.x, forward.z) > .1) carHeading = Math.atan2(forward.x, forward.z);
         wheelMeshes.forEach(({ pivot, tire }, i) => {

@@ -74,7 +74,9 @@ export const DEFAULT_HANDLING = 'classic';
 //   handbrake is a slide initiator, so it is scaled to Joyride's handbrake-only stop time from top speed
 //   instead: ~4 s [3.8 s]. The slide itself comes from driftGrip and the yaw-rate easing, not from the drag.
 // • Airborne = fewer than 2 wheels in contact: no traction, no yaw authority, Rapier integrates gravity.
-// • Visual squat/lean: pitch = -0.012·aF, roll = 0.02·yawRate·vF, clamped ±0.12 rad [same]; visual only.
+// • Visual squat/lean: pitch = -0.012·aF (nose up under power), roll = +0.02·yawRate·vF, clamped ±0.12 rad
+//   [same magnitudes]. The roll sign is flipped relative to Joyride's mesh: with +X = left, a positive rotation
+//   about the forward axis drops the RIGHT side, so the body leans OUT of a left turn as a sprung body does.
 const JOYRIDE_DEFAULTS = {
   maxSpeed: 1.2, accel: 4.5, brake: 3, grip: 7, driftGrip: 2.2, steerMax: .5, wheelbase: 2 * CAR.wheelZ,
   slipThreshold: .28, rollingDrag: .12, quadDrag: .08, reverseCap: .35, stopThreshold: .02,
@@ -310,7 +312,7 @@ function stepJoyride(car, input) {
   car.brakeLight = ((throttle < 0 && vF > J.stopThreshold) || input.brake || input.handbrake) ? 1 : (vF < -J.handbrakeCreep ? 2 : 0);
   // Visual only: the body squats under power and leans out of a corner.
   car.visPitch = clamp(car.visPitch + (aF * J.visPitchPerAccel - car.visPitch) * kv, -J.visClamp, J.visClamp);
-  car.visRoll = clamp(car.visRoll + (-yawRate * vF * J.visRollPerAccel - car.visRoll) * kv, -J.visClamp, J.visClamp);
+  car.visRoll = clamp(car.visRoll + (yawRate * vF * J.visRollPerAccel - car.visRoll) * kv, -J.visClamp, J.visClamp);
 }
 
 export function resetCar(car, spawn) {
