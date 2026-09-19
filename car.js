@@ -52,10 +52,11 @@ export const DEFAULT_HANDLING = 'joyride';
 // • Speed. maxSpeed stays the office's 1.2 m/s = 10 car lengths/s [32 m/s = 7 lengths/s]; the room, ramp and
 //   lane widths were validated at this speed, and lengths/s are already the same order, so seconds are
 //   comparable between the two cars and per-second rates (grip, easing) are copied unscaled.
-// • Accel 4.5 m/s² [8]. NOT scaled by the accel:maxSpeed ratio (0.25 s⁻¹ → 0.3 m/s²): the 17° ramp adds
+// • Accel 5 m/s² [8]. NOT scaled by the accel:maxSpeed ratio (0.25 s⁻¹ → 0.3 m/s²): the 17° ramp adds
 //   g·sin17° = 2.87 m/s² of downhill pull, so with the (1-(v/max)²) taper the motor needs ≥ ~4 m/s² to hold
-//   0.7 m/s on the slope. Time to 95% of top speed ≈ 1.83·max/accel = 0.5 s [7.3 s]; that snappiness is what
-//   a 150 g RC car does, and what the classic controller already did.
+//   0.7 m/s on the slope; 5 m/s² holds max·sqrt(1-2.87/5) = 0.78 m/s there (A2: raised from 4.5 = 0.68 m/s so
+//   the climb is closer to classic's ~1.0). Time to 95% of top speed ≈ 1.83·max/accel = 0.44 s [7.3 s]; that
+//   snappiness is what a 150 g RC car does, and what the classic controller already did.
 // • Brake 3 m/s² [14]. Joyride's brake:accel ratio (1.75) would give 8 m/s² and a 0.15 s stop; Joyride's
 //   stopping distance (8 lengths) would give 0.75 m/s² and a 1.6 s stop that overruns the 0.575 m desk lane.
 //   3 m/s² stops from top speed in 0.4 s over 0.24 m (2 lengths), inside check (d)'s 1.05 s gate.
@@ -80,7 +81,7 @@ export const DEFAULT_HANDLING = 'joyride';
 //   [same magnitudes]. The roll sign is flipped relative to Joyride's mesh: with +X = left, a positive rotation
 //   about the forward axis drops the RIGHT side, so the body leans OUT of a left turn as a sprung body does.
 const JOYRIDE_DEFAULTS = {
-  maxSpeed: 1.2, accel: 4.5, brake: 3, grip: 7, driftGrip: 2.2, steerMax: .5, wheelbase: 2 * CAR.wheelZ,
+  maxSpeed: 1.2, accel: 5, brake: 3, grip: 7, driftGrip: 2.2, steerMax: .5, wheelbase: 2 * CAR.wheelZ,
   slipThreshold: .28, rollingDrag: .12, quadDrag: .08, reverseCap: .35, stopThreshold: .02,
   handbrakeCreep: .011, handbrakeBrake: .1, governor: 1.25, steerEase: 8, yawEase: 3, minContacts: 2,
   visEase: 6, visPitchPerAccel: -.012, visRollPerAccel: .02, visClamp: .12,
@@ -282,9 +283,12 @@ function stepJoyride(car, input) {
   // Engine and brakes along the car's forward axis.
   const { throttle } = input;
   let aF = 0;
+  // A decelerating term may never carry vF past zero within one step: brake·dt = 0.05 m/s is wider than the
+  // ±stopThreshold hold zone, so an unclamped brake left the car oscillating at ±0.025 m/s instead of stopping.
+  const decel = (rate) => -Math.sign(vF) * Math.min(rate, Math.abs(vF) / dt);
   if (input.brake) {
     // Space: service brake, overrides throttle (PRD). Holds the car once it is nearly stopped.
-    if (vF > J.stopThreshold) aF = -J.brake; else if (vF < -J.stopThreshold) aF = J.brake; else vF = 0;
+    if (Math.abs(vF) > J.stopThreshold) aF = decel(J.brake); else vF = 0;
   } else if (throttle > 0 && vF >= -J.stopThreshold) {
     const f = Math.max(0, vF) / J.maxSpeed;                  // power fades to nothing at top speed
     aF = throttle * J.accel * (1 - f * f);
@@ -298,8 +302,7 @@ function stepJoyride(car, input) {
   }
   // Handbrake (Shift): drags the rears and kills the last creep outright.
   if (input.handbrake) {
-    if (vF > J.handbrakeCreep) aF -= J.brake * J.handbrakeBrake;
-    else if (vF < -J.handbrakeCreep) aF += J.brake * J.handbrakeBrake;
+    if (Math.abs(vF) > J.handbrakeCreep) aF += decel(J.brake * J.handbrakeBrake);
     else vF = 0;
   }
   // Downhill governor (kept from classic): gravity on the ramp, not the motor, is what exceeds the limit.
