@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Snap the Room — room preview (B)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  html, body { margin: 0; height: 100%; background: #111; color: #eee; font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+  canvas { display: block; }
+  #hud { position: fixed; top: 10px; left: 10px; background: rgba(12,12,14,.78); padding: 10px 12px; border-radius: 8px; max-width: 320px; backdrop-filter: blur(6px); }
+  #hud h1 { font-size: 14px; margin: 0 0 6px; letter-spacing: .02em; }
+  #hud .row { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+  button { background: #2a2d33; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 12px; }
+  button:hover { background: #3a3e46; }
+  button.on { background: #4d6fa8; border-color: #6d8fc8; }
+  #stats { font-family: ui-monospace, monospace; font-size: 11.5px; color: #bcd; white-space: pre; margin-top: 6px; }
+  #light { position: fixed; top: 10px; right: 10px; background: rgba(12,12,14,.78); padding: 10px 12px; border-radius: 8px; width: 270px; backdrop-filter: blur(6px); max-height: calc(100vh - 20px); overflow: auto; }
+  #light h2 { font-size: 13px; margin: 0 0 6px; }
+  #light label { display: grid; grid-template-columns: 92px 1fr 44px; gap: 6px; align-items: center; margin: 3px 0; font-size: 11.5px; }
+  #light input[type=range] { width: 100%; }
+  #light input[type=color] { width: 100%; height: 22px; border: 0; padding: 0; background: none; }
+  #light .v { font-family: ui-monospace, monospace; text-align: right; color: #bcd; }
+  #msg { position: fixed; bottom: 10px; left: 10px; background: rgba(12,12,14,.78); padding: 6px 10px; border-radius: 6px; font-family: ui-monospace, monospace; font-size: 11.5px; color: #9c9; }
+  #msg.err { color: #f88; white-space: pre-wrap; max-width: 80vw; }
+  #loading { position: fixed; inset: 0; display: grid; place-items: center; font-size: 20px; background: #111; }
+  kbd { background: #333; border-radius: 3px; padding: 0 4px; font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<div id="loading">Loading room preview…</div>
+<div id="hud">
+  <h1>Snap the Room · room preview (B track)</h1>
+  <div>Orbit: drag · pan: right-drag · zoom: wheel · <kbd>L</kbd> toggle lighting panel</div>
+  <div class="row" id="views"></div>
+  <div class="row">
+    <button id="tglGrid">tile grid</button>
+    <button id="tglCarpetTex" class="on">carpet texture</button>
+    <button id="tglShadow" class="on">shadows</button>
+    <button id="tglLive" class="on">live reload</button>
+    <button id="tglRoute" class="on">route markers</button>
+    <button id="tglCeiling">ceiling</button>
+  </div>
+  <div id="stats"></div>
+</div>
+<div id="light">
+  <h2>Lighting (lighting.js) <button id="copyLight" style="float:right">copy JSON</button></h2>
+  <div id="lightCtl"></div>
+</div>
+<div id="msg">starting…</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const msg = document.getElementById("msg");
+const say = (t, err = false) => { msg.textContent = t; msg.className = err ? "err" : ""; };
+window.addEventListener("error", (e) => say("ERROR: " + e.message, true));
+window.addEventListener("unhandledrejection", (e) => say("ERROR: " + (e.reason?.stack || e.reason), true));
+
+// ---------- load B's data modules (cache-busted so edits show up on reload) ----------
+const params = new URLSearchParams(location.search);
+const fallback = params.has("fallback");
+const bust = "?v=" + Date.now();
+const roomMod = await import((fallback ? "./room.fallback.js" : "./room.js") + bust + (params.has("detail") ? "&detail=" + params.get("detail") : ""));
+const { ROOM, SPAWN } = roomMod;
+const { PROPS } = fallback ? { PROPS: [] } : await import("./props.js" + bust);
+const { LIGHTING, MATERIALS, CARPET, EMISSIVE } = await import("./lighting.js" + bust);
+const L = JSON.parse(JSON.stringify(LIGHTING)); // live-editable copy
+const RAMP = roomMod.RAMP;
+const ROUTE = roomMod.ROUTE;
+
+// ---------- renderer / scene ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+renderer.setPixelRatio(Math.min(devicePixelRatio, L.pixelRatioCap));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = L.exposure;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(L.background);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.005, 60);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+
+// lights
+const hemi = new THREE.HemisphereLight(L.hemi.sky, L.hemi.ground, L.hemi.intensity);
+const ambient = new THREE.AmbientLight(L.ambient.color, L.ambient.intensity);
+const sun = new THREE.DirectionalLight(L.sun.color, L.sun.intensity);
+sun.position.set(...L.sun.position); sun.target.position.set(0, 0.4, 0);
+sun.castShadow = L.sun.castShadow;
+sun.shadow.mapSize.set(L.sun.shadowMapSize, L.sun.shadowMapSize);
+sun.shadow.bias = L.sun.shadowBias; sun.shadow.normalBias = L.sun.shadowNormalBias;
+const b = L.sun.shadowBounds; Object.assign(sun.shadow.camera, { left: -b, right: b, top: b, bottom: -b, near: 0.5, far: 40 });
+const fill = new THREE.DirectionalLight(L.fill.color, L.fill.intensity); fill.position.set(...L.fill.position);
+const rim = new THREE.PointLight(L.rim.color, L.rim.intensity, 8, 1.2); rim.position.set(...L.rim.position);
+scene.add(hemi, ambient, sun, sun.target, fill, rim);
+
+// ---------- carpet texture (procedural, from lighting.js CARPET) ----------
+function makeCarpetTexture(c) {
+  const px = c.texturePx, cv = document.createElement("canvas"); cv.width = cv.height = px;
+  const g = cv.getContext("2d");
+  g.fillStyle = c.base; g.fillRect(0, 0, px, px);
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  g.fillStyle = c.fleck;
+  for (let i = 0; i < px * 22; i++) g.fillRect(rnd() * px, rnd() * px, 1.2, 1.2);
+  g.fillStyle = c.seam; g.fillRect(0, 0, px, c.seamPx); g.fillRect(0, 0, c.seamPx, px);
+  const t = new THREE.CanvasTexture(cv);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+  return t;
+}
+const carpetTex = makeCarpetTexture(CARPET);
+
+// ---------- build static room as InstancedMesh per (color, tag-material) ----------
+const box = new THREE.BoxGeometry(1, 1, 1);
+const groups = new Map();
+for (const e of ROOM) {
+  const key = e.color + "|" + e.tag;
+  if (!groups.has(key)) groups.set(key, []);
+  groups.get(key).push(e);
+}
+const staticRoot = new THREE.Group(); scene.add(staticRoot);
+const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), eu = new THREE.Euler(), v3 = new THREE.Vector3(), sc = new THREE.Vector3();
+let carpetMat = null, carpetMesh = null;
+for (const [key, list] of groups) {
+  const [color, tag] = key.split("|");
+  const mp = MATERIALS[tag] || MATERIALS.default;
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: mp.roughness, metalness: mp.metalness });
+  if (EMISSIVE[color]) { mat.emissive = new THREE.Color(EMISSIVE[color].color); mat.emissiveIntensity = EMISSIVE[color].intensity; }
+  const inst = new THREE.InstancedMesh(box, mat, list.length);
+  inst.castShadow = tag !== "carpet" && tag !== "ceiling"; inst.receiveShadow = true;
+  list.forEach((e, i) => {
+    eu.set(...(e.rot || [0, 0, 0])); q.setFromEuler(eu);
+    m4.compose(v3.set(...e.pos), q, sc.set(...e.size)); inst.setMatrixAt(i, m4);
+  });
+  inst.instanceMatrix.needsUpdate = true;
+  inst.userData.tag = tag;
+  staticRoot.add(inst);
+  if (tag === "carpet" && color.toLowerCase() === CARPET.base.toLowerCase()) { carpetMat = mat; carpetMesh = inst; }
+}
+// The main carpet slab gets the tiled texture (the big 16x13 box). Instanced boxes share UVs per unit
+// box, so we render the carpet slab as a separate mesh with repeat = extents / tile.
+if (carpetMesh) {
+  const slab = ROOM.find((e) => e.tag === "carpet" && e.size[0] >= 10);
+  if (slab) {
+    const tex = carpetTex.clone(); tex.needsUpdate = true; tex.repeat.set(slab.size[0] / CARPET.tile, slab.size[2] / CARPET.tile);
+    const top = new THREE.Mesh(new THREE.PlaneGeometry(slab.size[0], slab.size[2]),
+      new THREE.MeshStandardMaterial({ map: tex, roughness: 1, metalness: 0 }));
+    top.rotation.x = -Math.PI / 2; top.position.set(slab.pos[0], slab.pos[1] + slab.size[1] / 2 + 0.0005, slab.pos[2]);
+    top.receiveShadow = true; top.name = "carpetTop"; scene.add(top);
+  }
+}
+
+// ---------- props (static preview; physics lives in A's index.html) ----------
+const propRoot = new THREE.Group(); scene.add(propRoot);
+for (const p of PROPS) {
+  const mp = MATERIALS[p.tag] || MATERIALS.default;
+  const m = new THREE.Mesh(box, new THREE.MeshStandardMaterial({ color: p.color, roughness: mp.roughness, metalness: mp.metalness }));
+  m.position.set(...p.pos); m.scale.set(...p.size); m.castShadow = m.receiveShadow = true; propRoot.add(m);
+}
+
+// ---------- car placeholder at spawn (A's constants: 0.12 x 0.025 x 0.055, wheels r=0.014) ----------
+const car = new THREE.Group();
+const body = new THREE.Mesh(box, new THREE.MeshStandardMaterial({ color: "#e0332b", roughness: 0.35, metalness: 0.2 }));
+body.scale.set(0.055, 0.025, 0.12); body.position.y = -0.004; body.castShadow = true; car.add(body);
+const cab = new THREE.Mesh(box, new THREE.MeshStandardMaterial({ color: "#1d1f24", roughness: 0.3, metalness: 0.4 }));
+cab.scale.set(0.04, 0.014, 0.05); cab.position.set(0, 0.012, -0.01); car.add(cab);
+const wheelGeo = new THREE.CylinderGeometry(0.014, 0.014, 0.012, 16); wheelGeo.rotateZ(Math.PI / 2);
+const wheelMat = new THREE.MeshStandardMaterial({ color: "#151515", roughness: 0.9 });
+for (const [x, y, z] of [[-0.032, -0.008, 0.042], [0.032, -0.008, 0.042], [-0.032, -0.008, -0.042], [0.032, -0.008, -0.042]]) {
+  const w = new THREE.Mesh(wheelGeo, wheelMat); w.position.set(x, y - 0.014, z); w.castShadow = true; car.add(w);
+}
+car.position.set(...SPAWN.pos); car.position.y = 0.041; car.rotation.y = SPAWN.heading; scene.add(car);
+
+// ---------- route markers ----------
+const routeRoot = new THREE.Group(); scene.add(routeRoot);
+if (ROUTE) {
+  const mk = (pos, color) => { const s = new THREE.Mesh(new THREE.SphereGeometry(0.04, 12, 8), new THREE.MeshBasicMaterial({ color })); s.position.set(pos[0], pos[1] + 0.06, pos[2]); routeRoot.add(s); };
+  mk(ROUTE.spawn, "#00ff88"); mk(ROUTE.rampFoot, "#ffdd00"); mk(ROUTE.rampCrest, "#ffdd00"); mk(ROUTE.laneMid, "#00ccff"); mk(ROUTE.dividerGap, "#ff66ff"); mk(ROUTE.cups, "#ffffff");
+  if (RAMP) {
+    const pts = [new THREE.Vector3(...RAMP.p0), new THREE.Vector3(...RAMP.p1)];
+    routeRoot.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: "#ffdd00" })));
+  }
+}
+const grid = new THREE.GridHelper(16, 32, 0x888888, 0x555555); grid.position.y = 0.002; grid.visible = false; scene.add(grid);
+
+// ---------- camera presets ----------
+const chaseOf = (pos, heading, back = 0.35, up = 0.1) => {
+  const eye = new THREE.Vector3(pos[0] - Math.sin(heading) * back, pos[1] + up, pos[2] - Math.cos(heading) * back);
+  return { eye, target: new THREE.Vector3(pos[0] + Math.sin(heading) * 0.3, pos[1] + 0.02, pos[2] + Math.cos(heading) * 0.3) };
+};
+const VIEWS = {
+  overview: { eye: new THREE.Vector3(-7.4, 2.6, 6.0), target: new THREE.Vector3(1.5, 0.5, -1.5) },
+  "top down": { eye: new THREE.Vector3(0, 14, 0.01), target: new THREE.Vector3(0, 0, 0) },
+  "east cabins": { eye: new THREE.Vector3(-2, 1.7, 4.5), target: new THREE.Vector3(6.5, 1.2, -1) },
+  "hero wall": { eye: new THREE.Vector3(-4, 1.6, 5), target: new THREE.Vector3(1, 1.0, -6) },
+  "spawn chase": chaseOf(SPAWN.pos, SPAWN.heading),
+  "ramp foot": ROUTE ? chaseOf(ROUTE.rampFoot, Math.PI / 2, 0.6, 0.15) : null,
+  "ramp crest": ROUTE ? chaseOf([ROUTE.rampCrest[0] - 0.3, ROUTE.rampCrest[1] - 0.1, ROUTE.rampCrest[2]], Math.PI / 2, 0.4, 0.12) : null,
+  "desk lane": ROUTE ? chaseOf([ROUTE.rampCrest[0] + 0.6, 0.75, ROUTE.rampCrest[2]], Math.PI / 2, 0.35, 0.1) : null,
+  "divider gap": ROUTE ? chaseOf([ROUTE.dividerGap[0], 0.75, ROUTE.dividerGap[2] - 0.35], 0, 0.35, 0.12) : null,
+  "cups": ROUTE ? chaseOf([ROUTE.cups[0] - 0.5, 0.04, ROUTE.cups[2] - 0.2], Math.PI / 3, 0.35, 0.1) : null,
+  "under desk": { eye: new THREE.Vector3(-0.6, 0.12, 0.2), target: new THREE.Vector3(-0.6, 0.1, -2.6) },
+};
+const viewsEl = document.getElementById("views");
+for (const [name, v] of Object.entries(VIEWS)) {
+  if (!v) continue;
+  const bt = document.createElement("button"); bt.textContent = name;
+  bt.onclick = () => { camera.position.copy(v.eye); controls.target.copy(v.target); controls.update(); };
+  viewsEl.appendChild(bt);
+}
+// restore camera across live reloads
+const saved = sessionStorage.getItem("previewCam");
+const forced = params.get("view");
+if (forced && VIEWS[forced]) { camera.position.copy(VIEWS[forced].eye); controls.target.copy(VIEWS[forced].target); }
+else if (saved) { const s = JSON.parse(saved); camera.position.fromArray(s.eye); controls.target.fromArray(s.target); }
+else { camera.position.copy(VIEWS.overview.eye); controls.target.copy(VIEWS.overview.target); }
+controls.update();
+setInterval(() => sessionStorage.setItem("previewCam", JSON.stringify({ eye: camera.position.toArray(), target: controls.target.toArray() })), 500);
+
+// ---------- toggles ----------
+const tgl = (id, fn, init = true) => { const el = document.getElementById(id); let on = init; el.classList.toggle("on", on); fn(on); el.onclick = () => { on = !on; el.classList.toggle("on", on); fn(on); }; };
+tgl("tglGrid", (on) => (grid.visible = on), false);
+tgl("tglCarpetTex", (on) => { const t = scene.getObjectByName("carpetTop"); if (t) t.visible = on; });
+tgl("tglShadow", (on) => { renderer.shadowMap.enabled = on; sun.castShadow = on; scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; }); }, L.sun.castShadow);
+let live = true; tgl("tglLive", (on) => (live = on));
+tgl("tglRoute", (on) => (routeRoot.visible = on), !params.has("noroute"));
+tgl("tglCeiling", (on) => staticRoot.children.forEach((m) => { if (m.userData.tag === "ceiling") m.visible = on; }), params.has("ceiling"));
+document.addEventListener("keydown", (e) => { if (e.key.toLowerCase() === "l") { const p = document.getElementById("light"); p.style.display = p.style.display === "none" ? "" : "none"; } });
+
+// ---------- lighting panel ----------
+const ctl = document.getElementById("lightCtl");
+const slider = (label, get, set, min, max, step = 0.01) => {
+  const row = document.createElement("label"); row.innerHTML = `<span>${label}</span><input type="range" min="${min}" max="${max}" step="${step}"><span class="v"></span>`;
+  const inp = row.querySelector("input"), out = row.querySelector(".v");
+  inp.value = get(); out.textContent = (+get()).toFixed(2);
+  inp.oninput = () => { set(+inp.value); out.textContent = (+inp.value).toFixed(2); };
+  ctl.appendChild(row);
+};
+const colorCtl = (label, get, set) => {
+  const row = document.createElement("label"); row.innerHTML = `<span>${label}</span><input type="color"><span class="v"></span>`;
+  const inp = row.querySelector("input"), out = row.querySelector(".v");
+  inp.value = get(); out.textContent = get();
+  inp.oninput = () => { set(inp.value); out.textContent = inp.value; };
+  ctl.appendChild(row);
+};
+slider("exposure", () => L.exposure, (v) => (L.exposure = renderer.toneMappingExposure = v), 0.3, 2.5);
+colorCtl("background", () => L.background, (v) => { L.background = v; scene.background.set(v); });
+slider("hemi", () => L.hemi.intensity, (v) => (L.hemi.intensity = hemi.intensity = v), 0, 3);
+colorCtl("hemi sky", () => L.hemi.sky, (v) => { L.hemi.sky = v; hemi.color.set(v); });
+colorCtl("hemi ground", () => L.hemi.ground, (v) => { L.hemi.ground = v; hemi.groundColor.set(v); });
+slider("ambient", () => L.ambient.intensity, (v) => (L.ambient.intensity = ambient.intensity = v), 0, 2);
+slider("sun", () => L.sun.intensity, (v) => (L.sun.intensity = sun.intensity = v), 0, 6);
+colorCtl("sun color", () => L.sun.color, (v) => { L.sun.color = v; sun.color.set(v); });
+slider("sun x", () => L.sun.position[0], (v) => { L.sun.position[0] = v; sun.position.x = v; }, -12, 12, 0.1);
+slider("sun y", () => L.sun.position[1], (v) => { L.sun.position[1] = v; sun.position.y = v; }, 1, 14, 0.1);
+slider("sun z", () => L.sun.position[2], (v) => { L.sun.position[2] = v; sun.position.z = v; }, -12, 12, 0.1);
+slider("fill", () => L.fill.intensity, (v) => (L.fill.intensity = fill.intensity = v), 0, 2);
+colorCtl("fill color", () => L.fill.color, (v) => { L.fill.color = v; fill.color.set(v); });
+slider("rim", () => L.rim.intensity, (v) => (L.rim.intensity = rim.intensity = v), 0, 3);
+slider("shadow bias", () => L.sun.shadowBias, (v) => (L.sun.shadowBias = sun.shadow.bias = v), -0.003, 0.003, 0.0001);
+document.getElementById("copyLight").onclick = async () => { await navigator.clipboard.writeText("export const LIGHTING = " + JSON.stringify(L, null, 2) + ";"); say("LIGHTING JSON copied — paste into lighting.js"); };
+
+// ---------- stats ----------
+const statsEl = document.getElementById("stats");
+let frames = 0, last = performance.now(), fps = 0;
+function stats() {
+  const tags = {}; for (const e of ROOM) tags[e.tag] = (tags[e.tag] || 0) + 1;
+  statsEl.textContent =
+    `${fallback ? "FALLBACK room" : "room.js"}${params.has("detail") ? " detail=" + params.get("detail") : ""}\n` +
+    `boxes ${ROOM.length}  props ${PROPS.length}  color groups ${groups.size}\n` +
+    `draw calls ${renderer.info.render.calls}  tris ${(renderer.info.render.triangles / 1000).toFixed(1)}k  fps ${fps}\n` +
+    Object.entries(tags).map(([k, v]) => `${k}:${v}`).join(" ") + "\n" +
+    (RAMP ? `ramp ${(RAMP.theta * 180 / Math.PI).toFixed(1)}° len ${RAMP.length.toFixed(2)} m  ${RAMP.p0[0]}→${RAMP.p1[0]} x` : "");
+}
+
+// ---------- live reload: poll Last-Modified of B's files ----------
+const WATCH = ["room.js", "props.js", "room.fallback.js", "lighting.js", "preview.html"];
+const stamps = {};
+async function stamp(f) { try { const r = await fetch(f, { method: "HEAD", cache: "no-store" }); return r.headers.get("last-modified") + "|" + r.headers.get("content-length"); } catch { return null; } }
+for (const f of WATCH) stamps[f] = await stamp(f);
+setInterval(async () => {
+  if (!live) return;
+  for (const f of WATCH) { const s = await stamp(f); if (s && stamps[f] && s !== stamps[f]) { say("changed: " + f + " — reloading"); location.reload(); return; } }
+}, 900);
+
+// ---------- loop ----------
+addEventListener("resize", () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+document.getElementById("loading").remove();
+say(`loaded ${ROOM.length} boxes, ${PROPS.length} props`);
+renderer.setAnimationLoop(() => {
+  controls.update();
+  renderer.render(scene, camera);
+  frames++; const now = performance.now();
+  if (now - last > 500) { fps = Math.round((frames * 1000) / (now - last)); frames = 0; last = now; stats(); }
+});
+</script>
+</body>
+</html>
