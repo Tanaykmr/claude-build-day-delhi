@@ -126,27 +126,66 @@
         import('three'), import('https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.14.0/+esm'),
       ]);
       await RAPIER.init();
+      // Track B's lighting/material direction is pure data. If it fails to load, keep flat lights so the demo still boots.
+      let LIGHTING = null, MATERIALS = {}, EMISSIVE = {};
+      try { ({ LIGHTING, MATERIALS = {}, EMISSIVE = {} } = await import('./lighting.js')); }
+      catch (error) { console.warn('lighting.js unavailable, using flat lights.', error); }
       const world = createWorld(RAPIER);
       const scene = new THREE.Scene();
-      scene.background = new THREE.Color('#bec5cd');
+      scene.background = new THREE.Color(LIGHTING?.background || '#bec5cd');
       const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, CAMERA.near, CAMERA.far);
       const renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
       renderer.setSize(innerWidth, innerHeight);
       renderer.outputColorSpace = THREE.SRGBColorSpace;
+      const shadows = params.has('shadows'); // PRD: start without shadows; ?shadows=1 opts in.
+      if (LIGHTING) {
+        renderer.toneMapping = THREE[`${LIGHTING.toneMapping || 'ACESFilmic'}ToneMapping`] ?? THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = LIGHTING.exposure ?? 1;
+        renderer.shadowMap.enabled = shadows;
+      }
       renderer.domElement.tabIndex = 0;
       renderer.domElement.setAttribute('aria-label', 'Office driving game. WASD or arrows to drive, Space to brake, R to recover.');
       document.body.prepend(renderer.domElement);
       renderer.domElement.addEventListener('webglcontextlost', e => { e.preventDefault(); showError(new Error('Graphics context lost. Reload to restart.')); });
-      scene.add(new THREE.AmbientLight(0xffffff, 1.8));
-      const sunlight = new THREE.DirectionalLight(0xfff0d8, 2.2);
-      sunlight.position.set(-4, 8, 3);
-      scene.add(sunlight);
+      function directional(spec, castShadow = false) {
+        const light = new THREE.DirectionalLight(spec.color, spec.intensity);
+        light.position.set(...spec.position);
+        light.target.position.set(0, 0, 0);
+        scene.add(light, light.target);
+        if (castShadow) {
+          light.castShadow = true;
+          light.shadow.mapSize.set(spec.shadowMapSize || 2048, spec.shadowMapSize || 2048);
+          light.shadow.bias = spec.shadowBias ?? -.0005;
+          light.shadow.normalBias = spec.shadowNormalBias ?? .02;
+          const b = spec.shadowBounds || 11;
+          Object.assign(light.shadow.camera, { left: -b, right: b, top: b, bottom: -b, near: .5, far: 30 });
+        }
+        return light;
+      }
+      if (LIGHTING) {
+        scene.add(new THREE.HemisphereLight(LIGHTING.hemi.sky, LIGHTING.hemi.ground, LIGHTING.hemi.intensity));
+        scene.add(new THREE.AmbientLight(LIGHTING.ambient.color, LIGHTING.ambient.intensity));
+        directional(LIGHTING.sun, shadows && LIGHTING.sun.castShadow !== false);
+        if (LIGHTING.fill) directional(LIGHTING.fill);
+        if (LIGHTING.rim) directional(LIGHTING.rim);
+      } else {
+        scene.add(new THREE.AmbientLight(0xffffff, 1.8));
+        directional({ color: 0xfff0d8, intensity: 2.2, position: [-4, 8, 3] });
+      }
 
       const box = new THREE.BoxGeometry(1, 1, 1), materials = new Map();
-      function material(color) {
-        const key = new THREE.Color(color).getHex();
-        if (!materials.has(key)) materials.set(key, new THREE.MeshLambertMaterial({ color: key }));
+      // One material per (color, tag): the tag picks roughness/metalness, the color stays the entry's own.
+      function material(color, tag = 'default') {
+        const hex = new THREE.Color(color).getHex(), key = `${hex}/${tag}`;
+        if (!materials.has(key)) {
+          const pbr = MATERIALS[tag] || MATERIALS.default || { roughness: .7, metalness: 0 };
+          const mat = LIGHTING ? new THREE.MeshStandardMaterial({ color: hex, roughness: pbr.roughness, metalness: pbr.metalness })
+            : new THREE.MeshLambertMaterial({ color: hex });
+          const glow = EMISSIVE[`#${hex.toString(16).padStart(6, '0')}`];
+          if (glow && LIGHTING) { mat.emissive = new THREE.Color(glow.color); mat.emissiveIntensity = glow.intensity ?? 1; }
+          materials.set(key, mat);
+        }
         return materials.get(key);
       }
       // Same Euler→quaternion math as the collider (car.js) so mesh and physics never disagree.
@@ -159,8 +198,8 @@
       for (const entry of ROOM) {
         const rotation = transform(entry);
         world.createCollider(roomColliderDesc(RAPIER, entry));
-        const mat = material(entry.color);
-        if (!groups.has(mat)) groups.set(mat, []);
+        const mat = material(entry.color, entry.tag);
+        if (!groups.has(mat)) { groups.set(mat, []); groups.get(mat).tag = entry.tag; }
         matrix.compose(new THREE.Vector3(...entry.pos), rotation, new THREE.Vector3(...entry.size));
         groups.get(mat).push(matrix.clone());
         const bounds = new THREE.Box3(new THREE.Vector3(-.5, -.5, -.5), new THREE.Vector3(.5, .5, .5)).applyMatrix4(matrix);
@@ -173,6 +212,8 @@
         transforms.forEach((m, i) => mesh.setMatrixAt(i, m));
         mesh.instanceMatrix.needsUpdate = true;
         mesh.computeBoundingSphere();
+        mesh.receiveShadow = shadows;
+        mesh.castShadow = shadows && transforms.tag !== 'ceiling'; // the ceiling slab would shadow the whole room
         scene.add(mesh);
         obstacles.push(mesh);
       }
@@ -180,8 +221,9 @@
         const body = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(...entry.pos)
           .setRotation(transform(entry)).setCcdEnabled(true).setLinearDamping(.15).setAngularDamping(.4));
         world.createCollider(RAPIER.ColliderDesc.cuboid(...entry.size.map(n => n / 2)).setFriction(ROOM_FRICTION).setRestitution(0).setMass(entry.mass), body);
-        const mesh = new THREE.Mesh(box, material(entry.color));
+        const mesh = new THREE.Mesh(box, material(entry.color, entry.tag));
         mesh.scale.set(...entry.size);
+        mesh.castShadow = mesh.receiveShadow = shadows;
         scene.add(mesh);
         obstacles.push(mesh);
         return { body, mesh };
@@ -189,18 +231,19 @@
       const car = createCar(RAPIER, world, SPAWN);
       const carMesh = new THREE.Group();
       scene.add(carMesh);
-      function carBox(size, pos, color) {
-        const mesh = new THREE.Mesh(box, material(color));
+      function carBox(size, pos, color, tag = 'cup') {
+        const mesh = new THREE.Mesh(box, material(color, tag));
+        mesh.castShadow = shadows;
         mesh.scale.set(...size); mesh.position.set(...pos); carMesh.add(mesh);
       }
       carBox([CAR.wid, CAR.hgt, CAR.len], [0, CAR.colliderY, 0], '#ffc45d');
-      carBox([.042, .014, .042], [0, .015, -.012], '#24364b');
+      carBox([.042, .014, .042], [0, .015, -.012], '#24364b', 'cabin');
       carBox([.04, .004, .009], [0, .009, .052], '#fff3cc'); // Front marks +Z.
       const wheelGeometry = new THREE.CylinderGeometry(CAR.wheelR, CAR.wheelR, CAR.wheelWidth, 12);
       wheelGeometry.rotateZ(Math.PI / 2); // Cylinder axle is local X.
       const wheelMeshes = WHEELS.map(() => {
         const pivot = new THREE.Group();
-        const tire = new THREE.Mesh(wheelGeometry, material('#17191c'));
+        const tire = new THREE.Mesh(wheelGeometry, material('#17191c', 'chair'));
         pivot.add(tire); carMesh.add(pivot);
         return { pivot, tire };
       });
