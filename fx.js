@@ -17,11 +17,13 @@
 
 export const FX = Object.freeze({
   maxParticles: 600, maxSkids: 256,
-  dustColor: 0xc9c2b2, sparkColor: 0xffb340, sparkCool: 0xff3b2e, hazeColor: 0x9aa0a8, skidColor: 0x262a2e,
-  skidWidth: .012,      // a touch wider than the 10 mm tire so the mark reads from the chase camera
+  dustColor: 0xc9c2b2, sparkColor: 0xffb340, sparkCool: 0xff3b2e, hazeColor: 0x9aa0a8, skidColor: 0x141619,
+  skidWidth: .015,      // wider than the 10 mm tire so the mark still reads from the chase camera
   skidStep: .008,       // minimum travel between segments (metres)
   skidGap: .09,         // a jump further than this starts a new mark instead of bridging it
-  skidLife: 9, skidFade: 3, skidAlpha: .5, skidLift: .0016,
+  // The carpet is a mid-grey photo texture, so a 0.5-alpha dark-grey mark disappeared into it: near-black at
+  // 0.78 is what actually reads as rubber on this floor (checked against .shots/a9-skid-*).
+  skidLife: 9, skidFade: 3, skidAlpha: .78, skidLift: .0016,
   dustLife: .38, dustGravity: .6, dustDrag: 3, dustGrow: 1,
   sparkLife: .22, sparkGravity: 9.81, sparkDrag: 1.5,
 });

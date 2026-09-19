@@ -730,6 +730,7 @@
       const audio = createAudio({ onState: paintSound }).attach(window);
       // Contact effects: drift smoke, impact dust/sparks, landing puffs and skid marks (fx.js).
       const effects = createEffects({ THREE, scene });
+      if (params.has('debug')) window.__fx = effects; // ?debug exposes the pools for CDP probes (skid/particle counts)
       // The HUD speaker glyph mirrors the audio state: waves when it is on, a slash when muted or unavailable.
       function paintSound({ available, muted }) {
         const glyph = document.querySelector('#sound-glyph'), label = document.querySelector('#sound-label');
