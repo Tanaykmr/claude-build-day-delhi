@@ -34,7 +34,7 @@
   <div class="row" id="views"></div>
   <div class="row">
     <button id="tglGrid">tile grid</button>
-    <button id="tglCarpetTex" class="on">carpet texture</button>
+    <button id="tglCarpetTex" class="on">surface textures</button>
     <button id="tglShadow" class="on">shadows</button>
     <button id="tglLive" class="on">live reload</button>
     <button id="tglRoute" class="on">route markers</button>
@@ -171,6 +171,25 @@ for (const p of PROPS) {
   m.position.set(...p.pos); m.scale.set(...p.size); m.castShadow = m.receiveShadow = true; propRoot.add(m);
 }
 
+// Same optional surface pack as the playable game; room data and instancing stay intact.
+let officeTextures = null;
+if (params.get('textures') !== 'off') {
+  try {
+    const { installOfficeTextures } = await import('./office-textures.js');
+    officeTextures = await installOfficeTextures({
+      THREE, renderer, palette: roomMod.PALETTE || {},
+      quality: params.get('textures') === 'low' || params.get('detail') === 'low' ? 'low' : 'high',
+      bindings: [
+        ...staticRoot.children.map(mesh => ({ material: mesh.material, tag: mesh.userData.tag })),
+        ...propRoot.children.map((mesh, i) => ({ material: mesh.material, tag: PROPS[i].tag })),
+      ],
+    });
+    window.__officeTextures = officeTextures;
+    const oldCarpet = scene.getObjectByName('carpetTop');
+    if (oldCarpet && officeTextures.stats.loaded.includes('carpet.webp')) oldCarpet.visible = false;
+  } catch (error) { console.warn('Office textures unavailable; retaining original materials.', error); }
+}
+
 // ---------- car placeholder at spawn (A's constants: 0.12 x 0.025 x 0.055, wheels r=0.014) ----------
 const car = new THREE.Group();
 const body = new THREE.Mesh(box, new THREE.MeshStandardMaterial({ color: "#e0332b", roughness: 0.35, metalness: 0.2 }));
@@ -283,7 +302,11 @@ if (!forced) setInterval(() => sessionStorage.setItem("previewCam", JSON.stringi
 // ---------- toggles ----------
 const tgl = (id, fn, init = true) => { const el = document.getElementById(id); let on = init; el.classList.toggle("on", on); fn(on); el.onclick = () => { on = !on; el.classList.toggle("on", on); fn(on); }; };
 tgl("tglGrid", (on) => (grid.visible = on), false);
-tgl("tglCarpetTex", (on) => { const t = scene.getObjectByName("carpetTop"); if (t) t.visible = on; });
+tgl("tglCarpetTex", (on) => {
+  if (officeTextures) officeTextures.setEnabled(on);
+  const t = scene.getObjectByName("carpetTop");
+  if (t) t.visible = !officeTextures?.stats.loaded.includes('carpet.webp') && on;
+});
 tgl("tglShadow", (on) => { renderer.shadowMap.enabled = on; sun.castShadow = on; scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; }); }, L.sun.castShadow);
 let live = true; tgl("tglLive", (on) => (live = on));
 tgl("tglRoute", (on) => (routeRoot.visible = on), !params.has("noroute"));

@@ -1,0 +1,44 @@
+[
+  {
+    "asset": "carpet",
+    "tool": "built-in image_gen",
+    "prompt": "Use case: photorealistic-natural. Asset type: game-ready square seamless albedo texture, one single office carpet tile. Reference image is material reference ONLY, not a scene to reproduce. Create a perfectly orthographic top-down material scan of ONE 50 cm commercial loop-pile carpet square filling the entire image edge to edge. Match reference charcoal/medium warm gray ribbed nylon fibers, tightly spaced straight parallel thin gray stripes running vertically, tiny organic looped fiber details, subtly varied wear. About 48 fine linear ribs across the tile. Include just one very thin subdued olive-yellow thread stripe near x=75%, parallel to ribs. NO patchwork, NO multiple rotated tiles, NO perspective, NO chairs, objects, shadows, border, labels, text or vignette. Flat diffuse neutral illumination; color/albedo only, not baked lighting. Seamless repeated edges, realistic fibrous texture, consistent scale and exposure throughout. Square 1024x1024.",
+    "reference": [
+      "codex-clipboard-87b72e3e-aa4c-413d-b649-1c513bd047c3.jpg"
+    ],
+    "notes": "Reference resized to 1600px before generation; generated asset resized and WebP compressed."
+  },
+  {
+    "asset": "upholstery",
+    "tool": "built-in image_gen",
+    "prompt": "Use case: photorealistic-natural. Asset type: seamless square upholstery material albedo for a browser game. Reference image material reference ONLY. Generate a flat top-down macro material scan of the BLACK woven nylon chair SEAT fabric visible in the reference (not the plastic slotted back). Fill entire square with charcoal-black tightly woven upholstery, small realistic crosswoven loops, even gridlike microstructure with slight natural fiber variation. No large holes; this is seat cloth. Uniform flat neutral diffuse lighting, no highlights, no shadows, no perspective, no objects, no border, no labels. Tile seamlessly in both axes. Lift darks just enough to resolve the weave, overall dark charcoal. 1024x1024 square.",
+    "reference": [
+      "codex-clipboard-c710ab9d-04f3-4232-b2de-7789dc69ae75.jpg"
+    ],
+    "notes": "Reference resized to 1600px before generation; generated asset resized and WebP compressed."
+  },
+  {
+    "asset": "wood",
+    "tool": "built-in image_gen",
+    "prompt": "Use case: photorealistic-natural. Asset type: seamless square game material albedo. Reference photo ONLY for the dark brown wood veneer on the office column and cabin window frames. Generate a straight-on flat scan of this walnut brown laminate woodgrain, continuous fine predominantly vertical grain with understated warm gray-brown tonal streaks and natural pores. No boards, plank joints, knots, furnishings, reflections, light gradients, perspective, labels or borders. Flat neutral diffuse albedo illumination. Edges tile seamlessly horizontally and vertically. Restrained realistic detail, not distressed wood. 1024x1024 square.",
+    "reference": [
+      "codex-clipboard-b4b30752-320f-4f4a-9928-6010a3c2ca83.jpg"
+    ],
+    "notes": "Reference resized to 1600px before generation; generated asset resized and WebP compressed."
+  },
+  {
+    "asset": "laminate",
+    "tool": "built-in image_gen",
+    "prompt": "Use case: photorealistic-natural. Asset type: seamless square material albedo for office desktop in a game. Reference image ONLY for the off-white melamine laminate desktop surface. Produce a perfectly top-down flat diffuse scan of one reusable patch of pale cool off-white laminate, extremely subtle tiny stippled manufacturing grain, a few very faint hairline surface scuffs. It must remain clean almost white at a distance but reveal a believable fine satin surface close up. No wood grain, no dramatic scratches, no stains, no objects, no coffee ring, no seams, no text, no borders, no lighting falloff or baked reflection. Uniform neutral illumination, tile seamlessly on both axes. 1024x1024.",
+    "reference": [
+      "codex-clipboard-a82e6ebb-8909-4be2-aecb-ce345d719b6e.jpg"
+    ],
+    "notes": "Reference resized to 1600px before generation; generated asset resized and WebP compressed."
+  },
+  {
+    "asset": "wallpaper",
+    "tool": "built-in image_gen",
+    "prompt": "Use case: photorealistic-natural. Asset type: 16:9 landscape wallpaper to put on a handful of computer screens inside a game. Create a beautiful realistic photograph of a calm alpine turquoise lake with distant blue-gray mountain peaks and a soft peach dawn sky, dark pine trees framing the lower edges, balanced serene composition, clean realistic detail readable at small resolution. No text, logos, watermarks, screens, computer frames, people or buildings. Landscape 1536x864.",
+    "notes": "Generated asset resized and WebP compressed."
+  }
+]
