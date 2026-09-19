@@ -177,12 +177,18 @@ for (let b = 0; b < BENCH_Z.length; b++) {
     add([BENCH_X, DESK_TOP - TOP_T / 2, lz], [RUN_LEN, TOP_T, LANE], PALETTE.desktop, "desktop");
     // desk frame rail under the outer edge
     add([BENCH_X, DESK_TOP - TOP_T - 0.03, bz + side * 0.55], [RUN_LEN - 0.3, 0.05, 0.04], PALETTE.deskFrame, "leg");
+    // cable run: one thin dark tray just inside the rail, well above the under-desk crossing (y < 0.3)
+    add([BENCH_X, DESK_TOP - TOP_T - 0.075, bz + side * 0.5], [RUN_LEN - 0.5, 0.025, 0.025], PALETTE.chair, "cable");
 
     for (let s = 0; s <= 8; s++) {
       const x = X0 + s * PITCH;
       // Slightly inset end supports to keep the ramp junction clear.
       const legX = Math.max(X0 + 0.15, Math.min(X0 + RUN_LEN - 0.15, x));
       add([legX, (DESK_TOP - TOP_T) / 2, lz], [0.05, DESK_TOP - TOP_T, 0.05], PALETTE.deskFrame, "leg");
+      // a cable drop from the tray to the floor beside some legs; legs 3 and 4 flank the under-desk crossing
+      // (leg 7 is where the last pitch's tower sits; the drop hugs the rail line, outside the bins at depth 0.31..0.53)
+      if (HIGH && s !== GAP_PITCH && s !== GAP_PITCH + 1 && s !== 7 && hash(b + 83, side + 89, s + 97) < 0.35)
+        add([legX + 0.06, 0.32, bz + side * 0.56], [0.02, 0.6, 0.02], PALETTE.chair, "cable");
     }
 
     for (let s = 0; s < 8; s++) {
@@ -206,17 +212,55 @@ for (let b = 0; b < BENCH_Z.length; b++) {
         const jitter = (hash(s + 7, b + 3, side + 5) - 0.5) * 0.08;
         const cz = bz + side * 0.5;
         const chx = cx + jitter;
+        const seat = hash(b + 71, side + 73, s + 79) < 0.22 ? PALETTE.coral : PALETTE.chair; // a few coral chairs break up the navy
         add([chx, 0.015, cz], [0.56, 0.03, 0.56], PALETTE.chairBase, "chair");
         add([chx, 0.22, cz], [0.05, 0.38, 0.05], PALETTE.chairBase, "chair");
-        add([chx, 0.425, cz], [0.45, 0.05, 0.45], PALETTE.chair, "chair");
-        add([chx, 0.7, cz + side * 0.18], [0.45, 0.5, 0.04], PALETTE.chair, "chair");
+        add([chx, 0.425, cz], [0.45, 0.05, 0.45], seat, "chair");
+        add([chx, 0.7, cz + side * 0.18], [0.45, 0.5, 0.04], seat, "chair");
       }
 
       // CPU towers on the floor beside some legs, never on the gap pitch
-      if (s !== GAP_PITCH && hash(b + 11, side + 13, s + 17) < 0.35) {
-        // last pitch: the end leg is inset, so put the tower on the west side of the chair
-        const cpuX = s === 7 ? cx - 0.45 : cx + 0.45;
-        add([cpuX, 0.2, bz + side * 0.38], [0.18, 0.4, 0.42], PALETTE.cpu, "cpu");
+      const cpuHere = s !== GAP_PITCH && hash(b + 11, side + 13, s + 17) < 0.35;
+      const cpuSide = s === 7 ? -1 : 1; // last pitch: the end leg is inset, so the tower goes west of the chair
+      if (cpuHere) add([cx + cpuSide * 0.45, 0.2, bz + side * 0.38], [0.18, 0.4, 0.42], PALETTE.cpu, "cpu");
+
+      // ---------- under-desk storage (visual only, fixed cuboids; never on the gap pitch) ----------
+      // Occupied seat: a bin beside the chair on the side without a tower (pitch 0 has its end leg inset
+      // at cx-0.45, pitch 7 at cx+0.45, so the free side flips there). Empty seat: a storage pedestal.
+      if (s !== GAP_PITCH) {
+        if (!away) {
+          const binSide = s === 0 ? 1 : -1;
+          const blocked = (cpuHere && cpuSide === binSide) || (s === 7 && binSide === 1);
+          if (!blocked && hash(b + 31, side + 37, s + 41) < 0.55)
+            add([cx + binSide * 0.44, 0.14, bz + side * 0.42], [0.22, 0.28, 0.22], hash(b + 43, side + 47, s + 53) < 0.5 ? PALETTE.chair : PALETTE.dividerTop, "storage");
+        } else if (hash(b + 59, side + 61, s + 67) < 0.6) {
+          add([cx + 0.05, 0.28, bz + side * 0.35], [0.4, 0.56, 0.5], PALETTE.desktop, "storage");
+        }
+      }
+
+      // ---------- workstation clutter (visual only; every piece is a fixed cuboid resting on the desktop) ----------
+      // Seeded per (bench, side, pitch) so neighbouring desks differ. Nothing goes on the driven lane
+      // (check-room "driven desk lane" corridor) or on the driven bench's gap pitch (cross-lane turn), and
+      // nothing on ?detail=low. Slots: keyboard + mouse at the front edge, one item left of the monitor,
+      // a mug and one item right of it. Every slot is disjoint from the monitor foot (cx±0.1, depth 0.06..0.20).
+      if (HIGH && !drivenLane && !(driven && s === GAP_PITCH)) {
+        const r = (k) => hash(b * 8 + s + 1, side + 3, k); // k = slot id
+        const dz = (o) => bz + side * o; // desk depth offset (0 = divider, 0.6 = outer edge) → world z
+        const onDesk = (x, o, size, color) => add([x, DESK_TOP + size[1] / 2, dz(o)], size, color, "desk-item");
+        const kx = cx + (r(1) - 0.5) * 0.08;
+        onDesk(kx, 0.4, [0.44, 0.02, 0.15], r(2) < 0.7 ? PALETTE.chair : PALETTE.deskFrame); // keyboard
+        onDesk(cx + (r(3) < 0.15 ? -0.31 : 0.31), 0.4, [0.06, 0.03, 0.1], PALETTE.chair); // mouse
+        const left = r(4);
+        if (left < 0.4) onDesk(cx - 0.36, 0.36, [0.16, 0.015, 0.22], [PALETTE.coral, PALETTE.yellow, PALETTE.dividerTop][Math.floor(r(5) * 3)]); // notebook
+        else if (left < 0.6) onDesk(cx - 0.45, 0.22, [0.21, 0.025, 0.3], PALETTE.desktop); // paper stack
+        else if (left < 0.85) onDesk(cx - 0.45, 0.16, [0.17, 0.045, 0.15], PALETTE.chair); // desk phone
+        if (r(6) < 0.6) onDesk(cx + 0.45, 0.28, [0.075, 0.09, 0.075], [PALETTE.coral, PALETTE.yellow, PALETTE.desktop, PALETTE.dividerTop][Math.floor(r(7) * 4)]); // mug
+        const right = r(8);
+        if (right < 0.45) onDesk(cx + 0.4, 0.14, [0.07, 0.1, 0.07], PALETTE.chair); // pen cup
+        else if (right < 0.7) {
+          add([cx + 0.5, DESK_TOP + 0.045, dz(0.14)], [0.09, 0.09, 0.09], PALETTE.pot, "plant"); // small plant: pot + foliage
+          add([cx + 0.5, DESK_TOP + 0.09 + 0.055, dz(0.14)], [0.15, 0.13, 0.15], PALETTE.leaf, "plant");
+        }
       }
     }
   }
@@ -251,6 +295,36 @@ for (const z of [-3.9, -1.3, 1.3, 3.9]) {
 add([CABIN_X, SOFFIT + (CEIL - SOFFIT) / 2, 0], [0.06, CEIL - SOFFIT, D], PALETTE.wall, "cabin");
 add([CABIN_X - 0.005, 0.15, 0], [0.07, 0.3, D], PALETTE.wall, "cabin");
 for (const z of [-5.2, -2.6, 0, 2.6, 5.2]) add([CABIN_X - 0.01, 0.3 + 1.05, z + 0.55], [0.08, 2.1, 0.9], PALETTE.wall, "cabin");
+
+// ---------- floor clutter: plants by the pillars, cabins and hero wall; recycling bins; a printer; a water cooler; a clock ----------
+// All outside every check-room corridor (spawn aisle, shoulders, ramp approach, west turning zone, under-desk
+// crossings) and outside the race loop's east-end turn (x 5.5..6.36 between z -3.2 and 0).
+const floorPlant = (x, z, k = 1) => {
+  add([x, 0.16 * k, z], [0.3 * k, 0.32 * k, 0.3 * k], PALETTE.pot, "plant");
+  add([x, (0.32 + 0.275) * k, z], [0.5 * k, 0.55 * k, 0.5 * k], PALETTE.leaf, "plant");
+  add([x + 0.05 * k, (0.32 + 0.55 + 0.17) * k, z - 0.04 * k], [0.3 * k, 0.34 * k, 0.3 * k], PALETTE.leaf, "plant");
+};
+floorPlant(-6.75, -3.7); // west of the north pillar (clear of the race's west-end turn, z > -3.3)
+floorPlant(-6.75, 3.6); // west of the south pillar
+floorPlant(6.05, 3.9, 0.9); // in front of the cabins, in the z bands no bench reaches (?ramp=15 moves the bench end to 5.87)
+floorPlant(6.05, 5.9, 0.9);
+floorPlant(-2.6, -6.1, 0.8); // along the hero wall
+// recycling bins on the north face of the north pillar
+add([-6.35, 0.275, -4.05], [0.3, 0.55, 0.3], PALETTE.dividerTop, "storage");
+add([-6.05, 0.275, -4.05], [0.3, 0.55, 0.3], PALETTE.chair, "storage");
+// printer on a low cabinet south of the south pillar
+add([-6.2, 0.35, 4.35], [0.6, 0.7, 0.6], PALETTE.desktop, "storage");
+add([-6.2, 0.7 + 0.16, 4.35], [0.5, 0.32, 0.45], PALETTE.chair, "storage");
+add([-6.2, 0.7 + 0.32 + 0.02, 4.3], [0.36, 0.04, 0.3], PALETTE.deskFrame, "storage");
+// water cooler beside the hero-wall door
+add([3.6, 0.475, -6.2], [0.32, 0.95, 0.32], PALETTE.desktop, "storage");
+add([3.6, 0.95 + 0.17, -6.2], [0.22, 0.34, 0.22], PALETTE.aqua, "storage");
+add([3.6, 0.82, -6.2 + 0.18], [0.1, 0.06, 0.05], PALETTE.chair, "storage");
+// wall clock on the hero wall between the sign band and the door
+add([2.6, 2.2, NZ + 0.02], [0.36, 0.36, 0.03], PALETTE.chair, "wall");
+add([2.6, 2.2, NZ + 0.03], [0.3, 0.3, 0.035], PALETTE.desktop, "wall");
+add([2.6, 2.25, NZ + 0.05], [0.02, 0.12, 0.02], PALETTE.chair, "wall");
+add([2.65, 2.2, NZ + 0.05], [0.1, 0.02, 0.02], PALETTE.chair, "wall");
 
 // ---------- the ramp: floor → west edge of the driven desktop lane ----------
 // Top-face endpoints. Length lies along local X; rotate around Z to climb toward world +X.
@@ -307,6 +381,53 @@ export const ROUTE = {
   laneMid: [BENCH_X, DESK_TOP, RAMP_LANE_Z],
   dividerGap: [X0 + 0.6 + GAP_PITCH * PITCH, DESK_TOP, BENCH_Z[DRIVEN_BENCH]],
   cups: [CUP_SQUARE[0], 0, CUP_SQUARE[1]],
+};
+
+// ---------- race data (A consumes this; room.fallback.js exports the same shape) ----------
+// Loop choice: a pure FLOOR loop around the driven bench, counter-clockwise on a north-up minimap: east along
+// the spawn aisle (z=0), north past the bench end at the cabins, west along the z=-3.2 aisle, south along the
+// west wall. The ramp is deliberately NOT part of the race loop: a 0.4 m ramp driven in both directions plus a
+// U-turn on a 0.6 m desk lane is fine for one player and a pile-up for four cars. The desk stays free-drive.
+// Checkpoint pos.y is the SURFACE height (carpet 0); grid pos is the body origin like SPAWN. check-room.mjs
+// verifies every checkpoint rests on carpet (or the driven desktop), has clear air above it, consecutive
+// checkpoints are >= 1 m apart, and grid slots are clear of furniture and >= 0.25 m from each other.
+const BENCH_EAST = +(BENCH_X + RUN_LEN / 2).toFixed(3);
+const EAST_TURN_X = +((BENCH_EAST + CABIN_X - 0.04) / 2).toFixed(3); // midway between the bench end and the cabin sill
+const cp = (x, z, radius) => ({ pos: [x, 0, z], radius });
+const rect = (x0, z0, x1, z1) => [[x0, z0, x1, z0], [x1, z0, x1, z1], [x1, z1, x0, z1], [x0, z1, x0, z0]];
+export const RACE = {
+  laps: 3,
+  // 2x2 grid in the spawn aisle, about 1.1 m behind the start line, facing east like SPAWN
+  grid: [
+    { pos: [-6.7, 0.07, -0.16], heading: Math.PI / 2 },
+    { pos: [-6.7, 0.07, 0.16], heading: Math.PI / 2 },
+    { pos: [-7.05, 0.07, -0.16], heading: Math.PI / 2 },
+    { pos: [-7.05, 0.07, 0.16], heading: Math.PI / 2 },
+  ],
+  checkpoints: [
+    cp(-5.6, 0, 0.6), // start/finish
+    cp(-2.5, 0, 0.6),
+    cp(1.0, 0, 0.6),
+    cp(4.4, 0, 0.55),
+    cp(EAST_TURN_X, BENCH_Z[DRIVEN_BENCH], 0.35), // east-end turn between the bench end and the cabins
+    cp(4.4, -3.2, 0.55),
+    cp(1.0, -3.2, 0.6),
+    cp(-2.5, -3.2, 0.6),
+    cp(-5.8, -3.0, 0.4), // short of the north pillar (x -6.4..-6.0, z -3.8..-3.4)
+    cp(-7.3, -2.2, 0.35), // west-end turn, on the wall side of the ramp approach
+    cp(-7.3, -0.5, 0.4), // straight down the west wall, 0.65 m west of the ramp's foot fillet
+  ],
+  // coarse outline for a compact minimap: room, cabin front, the four bench runs, the two pillars
+  minimap: {
+    bounds: [-W / 2, -D / 2, W / 2, D / 2],
+    walls: [
+      ...rect(-W / 2, -D / 2, W / 2, D / 2),
+      [CABIN_X, -D / 2, CABIN_X, D / 2],
+      ...BENCH_Z.flatMap((bz) => rect(X0, bz - 0.6, BENCH_EAST, bz + 0.6)),
+      ...rect(-6.4, -3.8, -6.0, -3.4),
+      ...rect(-6.4, 3.4, -6.0, 3.8),
+    ],
+  },
 };
 
 export const ROOM = R;

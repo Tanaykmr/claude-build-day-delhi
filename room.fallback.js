@@ -86,4 +86,36 @@ plate(p0, p1, 0.4, 0.01, "#f26a55", "ramp");
 // crest fillet: chord under the concave crest corner, bridges the ramp/desk seam, never above 0.75
 plate([X0 - CREST_FILLET, DESK_TOP - CREST_FILLET * Math.tan(theta), LZ], [X0 + CREST_FILLET, DESK_TOP, LZ], 0.4, 0.01, "#f26a55", "ramp");
 
+// Race data: same shape and the same floor loop around the bench as room.js (see the RACE comment there).
+// No cabins here, so the east-end turn uses the same x as the live room (midway bench end → cabin sill).
+const BENCH_EAST = +(BENCH_X + RUN_LEN / 2).toFixed(3);
+const cp = (x, z, radius) => ({ pos: [x, 0, z], radius });
+const rect = (x0, z0, x1, z1) => [[x0, z0, x1, z0], [x1, z0, x1, z1], [x1, z1, x0, z1], [x0, z1, x0, z0]];
+export const RACE = {
+  laps: 3,
+  grid: [
+    { pos: [-6.7, 0.07, -0.16], heading: Math.PI / 2 },
+    { pos: [-6.7, 0.07, 0.16], heading: Math.PI / 2 },
+    { pos: [-7.05, 0.07, -0.16], heading: Math.PI / 2 },
+    { pos: [-7.05, 0.07, 0.16], heading: Math.PI / 2 },
+  ],
+  checkpoints: [
+    cp(-5.6, 0, 0.6),
+    cp(-2.5, 0, 0.6),
+    cp(1.0, 0, 0.6),
+    cp(4.4, 0, 0.55),
+    cp(+((BENCH_EAST + 6.36) / 2).toFixed(3), BENCH_Z, 0.35),
+    cp(4.4, -3.2, 0.55),
+    cp(1.0, -3.2, 0.6),
+    cp(-2.5, -3.2, 0.6),
+    cp(-5.8, -3.0, 0.4),
+    cp(-7.3, -2.2, 0.35),
+    cp(-7.3, -0.5, 0.4),
+  ],
+  minimap: {
+    bounds: [-W / 2, -D / 2, W / 2, D / 2],
+    walls: [...rect(-W / 2, -D / 2, W / 2, D / 2), ...rect(X0, BENCH_Z - 0.6, BENCH_EAST, BENCH_Z + 0.6)],
+  },
+};
+
 export const ROOM = R;

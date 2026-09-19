@@ -11,7 +11,7 @@ const room = await import(fallback ? "./room.fallback.js" : "./room.js");
 const { ROOM, SPAWN } = room;
 const { PROPS } = fallback ? { PROPS: [] } : await import("./props.js");
 
-const ROOM_TAGS = new Set(["carpet", "desktop", "divider", "leg", "ramp", "wall", "cabin", "pillar", "ceiling", "chair", "cpu", "monitor"]);
+const ROOM_TAGS = new Set(["carpet", "desktop", "divider", "leg", "ramp", "wall", "cabin", "pillar", "ceiling", "chair", "cpu", "monitor", "desk-item", "plant", "storage", "cable"]);
 const PROP_TAGS = new Set(["cup", "bottle", "files", "bin"]);
 const W = 16, D = 13, MARGIN = 0.25;
 
@@ -57,7 +57,7 @@ ok(`${ROOM.length} room boxes, ${PROPS.length} props validated for shape/tag/bou
 // ---------- tag / draw-call budget ----------
 const tags = {}, colors = new Set(), keys = new Set();
 for (const e of ROOM) { tags[e.tag] = (tags[e.tag] || 0) + 1; colors.add(e.color); keys.add(e.color + "|" + e.tag); }
-console.log("      tags:", Object.entries(tags).map(([k, v]) => `${k}=${v}`).join(" "));
+console.log("      per-tag counts:", Object.entries(tags).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}=${v}`).join(" "));
 console.log(`      tris ≈ ${(ROOM.length + PROPS.length) * 12}  (budget 200k)   colors ${colors.size}   instanced draw calls ≈ ${keys.size + PROPS.length}  un-instanced ${ROOM.length + PROPS.length} (budget 150)`);
 if (ROOM.length + PROPS.length > 150) warn("un-instanced draw calls exceed 150: A must instance static boxes by color (prd §8) or use ?detail=low");
 
@@ -173,6 +173,76 @@ if (!fallback && room.BENCH_Z) {
   corridor("divider gap on desk (x gap pitch, z -2.15..-1.05)", [X0 + 0.6 + room.GAP_PITCH * 1.2 - 0.5, 0.7505, -2.15], [X0 + 0.6 + room.GAP_PITCH * 1.2 + 0.5, 0.95, -1.05], new Set(["desktop"]));
   corridor("under-desk crossing (gap pitch, z -2.6..-0.6, y<0.3)", [X0 + 0.6 + room.GAP_PITCH * 1.2 - 0.5, 0.0005, -2.6], [X0 + 0.6 + room.GAP_PITCH * 1.2 + 0.5, 0.3, -0.6]);
   corridor("west turning zone (x -7.7..-6.7, z -2.3..0.8, y<0.3)", [-7.7, 0.0005, -2.3], [-6.7, 0.3, 0.8]);
+  // enrichment zones: the gap pitch stays crossable under EVERY bench (bins, pedestals, cable drops, towers keep off it)
+  const gapX = X0 + 0.6 + room.GAP_PITCH * 1.2;
+  room.BENCH_Z.forEach((bz, b) => corridor(`under-desk crossing bench ${b} (gap pitch, z ${(bz - 1).toFixed(1)}..${(bz + 1).toFixed(1)}, y<0.3)`, [gapX - 0.5, 0.0005, bz - 1.0], [gapX + 0.5, 0.3, bz + 1.0]));
+  // race loop legs (RACE in room.js): north aisle, east-end turn between the bench end and the cabin sill, west-end turn
+  const benchEast = room.BENCH_X + 4.8;
+  corridor("race: north aisle (x -5.6..5.2, z -4.0..-2.4, y<0.3)", [-5.6, 0.0005, -4.0], [5.2, 0.3, -2.4]);
+  corridor(`race: east-end turn (x ${(benchEast + 0.05).toFixed(2)}..6.35, z -3.2..0, y<0.3)`, [benchEast + 0.05, 0.0005, -3.2], [6.35, 0.3, 0]);
+  corridor("race: west-end turn (x -7.7..-6.7, z -3.3..-2.3, y<0.3)", [-7.7, 0.0005, -3.3], [-6.7, 0.3, -2.3]);
+  // clutter must stay under the desktops: nothing but chairs/legs/towers may poke into the aisles beyond the desk-edge line
+  // (pieces inside the bench run and within a chair's reach, 0.85 m, of a bench centreline; free-standing floor plants are elsewhere)
+  const aisleGap = solids.filter(({ e, bb }) => ["storage", "cable", "desk-item", "plant"].includes(e.tag) && bb.min[0] > X0 && bb.max[0] < X0 + 9.6 && bb.max[1] < 0.75 &&
+    room.BENCH_Z.some((bz) => Math.abs(e.pos[2] - bz) < 0.85) && room.BENCH_Z.every((bz) => bb.min[2] > bz + 0.6 + 1e-6 || bb.max[2] < bz - 0.6 - 1e-6));
+  if (aisleGap.length) fail(`${aisleGap.length} under-desk clutter pieces protrude beyond the desktop footprint: ${[...new Set(aisleGap.map((h) => h.e.tag + "@" + h.e.pos.map((n) => n.toFixed(2))))].slice(0, 5).join(" ")}`);
+  else ok("under-desk clutter (storage, cable, desk-item, plant) stays inside the desktop footprints");
+}
+
+// ---------- race data contract (both rooms): grid, ordered checkpoints on driveable surfaces, minimap outline ----------
+{
+  const RACE = room.RACE;
+  if (!RACE || typeof RACE !== "object") fail("RACE export missing");
+  else {
+    const { grid, checkpoints, laps, minimap } = RACE;
+    if (!(Number.isInteger(laps) && laps >= 1)) fail(`RACE.laps ${laps} must be a positive integer`);
+    if (!Array.isArray(grid) || grid.length !== 4) fail(`RACE.grid must hold 4 slots, found ${grid && grid.length}`);
+    else {
+      grid.forEach((g, i) => {
+        if (!Array.isArray(g.pos) || g.pos.length !== 3 || !fin(g.pos) || !Number.isFinite(g.heading)) return fail(`RACE.grid[${i}] bad pos/heading`);
+        const [x, y, z] = g.pos;
+        const carBB = { min: [x - 0.07, y - 0.03, z - 0.07], max: [x + 0.07, y + 0.03, z + 0.07] }; // 0.12 x 0.055 car at any heading
+        const hits = solids.filter(({ bb }) => overlaps(carBB, bb));
+        if (hits.length) fail(`RACE.grid[${i}] intersects ${[...new Set(hits.map((h) => h.e.tag))].join(",")}`);
+        const floor = topUnder(x, z, y, 0.07);
+        if (floor.y === -Infinity || floor.e.tag !== "carpet") fail(`RACE.grid[${i}] is not on carpet`);
+        else if (y - floor.y > 0.12 || y - floor.y < 0.045) fail(`RACE.grid[${i}] body origin ${(y - floor.y).toFixed(3)} m above the floor (want 0.045–0.12)`);
+        for (const r of ramps) { const rbb = aabb(r); if (x + 0.07 > rbb.min[0] - 0.3 && x - 0.07 < rbb.max[0] && z + 0.07 > rbb.min[2] && z - 0.07 < rbb.max[2]) fail(`RACE.grid[${i}] is on the ramp or its approach`); }
+        for (let j = i + 1; j < grid.length; j++) { const d = Math.hypot(x - grid[j].pos[0], z - grid[j].pos[2]); if (d < 0.25) fail(`RACE.grid[${i}] and [${j}] are ${d.toFixed(2)} m apart (want ≥ 0.25)`); }
+      });
+    }
+    if (!Array.isArray(checkpoints) || checkpoints.length < 4) fail(`RACE.checkpoints must be an ordered loop of ≥ 4, found ${checkpoints && checkpoints.length}`);
+    else {
+      const lane = room.RAMP_LANE_Z ?? -1.9;
+      let loopLen = 0;
+      checkpoints.forEach((c, i) => {
+        if (!Array.isArray(c.pos) || c.pos.length !== 3 || !fin(c.pos) || !(c.radius >= 0.2 && c.radius <= 1.0)) return fail(`RACE.checkpoints[${i}] bad pos or radius (want 0.2–1.0)`);
+        const [x, y, z] = c.pos, r = c.radius;
+        // driveable surface: carpet, or the driven desktop lane, within 5 mm of pos.y
+        const sup = topUnder(x, z, y + 0.005, 0.05);
+        const onDesk = sup.e && sup.e.tag === "desktop" && Math.abs(z - lane) <= 0.3;
+        if (sup.y === -Infinity || !(sup.e.tag === "carpet" || onDesk)) fail(`RACE.checkpoints[${i}] at (${x}, ${z}) is not over carpet or the driven desktop lane (${sup.e ? sup.e.tag : "nothing"})`);
+        else if (Math.abs(sup.y - y) > 0.005) fail(`RACE.checkpoints[${i}] pos.y ${y} is ${((y - sup.y) * 1000).toFixed(0)} mm off the ${sup.e.tag} surface`);
+        // clear air above the inner half of the disc so a car can actually pass through the centre
+        const allow = new Set(onDesk ? ["desktop"] : ["carpet"]);
+        const box = { min: [x - r / 2, y + 0.0005, z - r / 2], max: [x + r / 2, y + 0.3, z + r / 2] };
+        const hits = solids.filter(({ e, bb }) => !allow.has(e.tag) && overlaps(box, bb));
+        if (hits.length) fail(`RACE.checkpoints[${i}] blocked by ${[...new Set(hits.map((h) => h.e.tag))].join(",")}`);
+        const n = checkpoints[(i + 1) % checkpoints.length];
+        const d = Math.hypot(x - n.pos[0], z - n.pos[2]);
+        loopLen += d;
+        if (d < 1.0) fail(`RACE.checkpoints[${i}] → [${(i + 1) % checkpoints.length}] only ${d.toFixed(2)} m apart (want ≥ 1)`);
+      });
+      if (!fails) ok(`RACE: ${checkpoints.length} checkpoints on driveable surfaces, ≥ 1 m apart, closed loop ≈ ${loopLen.toFixed(1)} m, ${laps} laps; ${grid.length} grid slots clear and ≥ 0.25 m apart`);
+    }
+    if (!minimap || !Array.isArray(minimap.bounds) || minimap.bounds.length !== 4 || !fin(minimap.bounds) || !Array.isArray(minimap.walls)) fail("RACE.minimap needs bounds [minX,minZ,maxX,maxZ] and walls [[x0,z0,x1,z1],...]");
+    else {
+      const [x0, z0, x1, z1] = minimap.bounds;
+      const bad = minimap.walls.filter((w) => !Array.isArray(w) || w.length !== 4 || !fin(w) || w[0] < x0 - 0.01 || w[2] < x0 - 0.01 || w[0] > x1 + 0.01 || w[2] > x1 + 0.01 || w[1] < z0 - 0.01 || w[3] < z0 - 0.01 || w[1] > z1 + 0.01 || w[3] > z1 + 0.01);
+      if (bad.length) fail(`RACE.minimap: ${bad.length} wall segments malformed or outside bounds`);
+      else ok(`RACE.minimap: ${minimap.walls.length} wall segments inside bounds [${minimap.bounds.join(", ")}]`);
+    }
+  }
 }
 
 // ---------- props: resting, non-overlapping, off the ramp ----------

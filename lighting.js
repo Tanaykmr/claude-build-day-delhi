@@ -61,6 +61,11 @@ export const MATERIALS = {
   bottle: { roughness: 0.2, metalness: 0.1 },
   files: { roughness: 0.9, metalness: 0.0 },
   bin: { roughness: 0.6, metalness: 0.2 },
+  // enrichment tags (room.js): desk clutter, plants, under-desk storage / floor appliances, cable trays
+  "desk-item": { roughness: 0.55, metalness: 0.05 },
+  plant: { roughness: 0.9, metalness: 0.0 },
+  storage: { roughness: 0.6, metalness: 0.05 },
+  cable: { roughness: 0.85, metalness: 0.0 },
   default: { roughness: 0.7, metalness: 0.0 },
 };
 
