@@ -11,7 +11,7 @@ open http://localhost:8000
 
 Serve over HTTP. `file://` does not work (multi-file module app, import map, WASM). The first load pulls Three.js and Rapier from jsDelivr; warm the cache on the demo laptop before going on stage and keep that tab open.
 
-Controls: **WASD / arrows** drive, **Space** brake, **Shift** handbrake (slides; honoured by the `joyride` handling, ignored by `classic`), **R** recover to spawn. Losing window focus clears input. Reload the page to restore every prop.
+Controls: **WASD / arrows** drive, **Space** brake, **Shift** handbrake (breaks traction for a slide; release to recover), **R** recover to spawn. Shift only acts under the `joyride` handling, which is the default. Losing window focus clears input. Reload the page to restore every prop.
 
 ## URLs
 
@@ -23,12 +23,13 @@ Controls: **WASD / arrows** drive, **Space** brake, **Shift** handbrake (slides;
 | `/?ramp=15` | Gentler ramp (default 17°). Benches shift east automatically so the approach stays 1.25 m. Any value 12–18.5 |
 | `/?detail=low` | Drops monitors, divider trim and most chairs (about 450 fewer boxes) for slow machines |
 | `/?shadows=1` | Directional shadows (off by default per the PRD) |
-| `/?handling=joyride` | Vehicle model selector in car.js: `classic` (default, the validated controller) or `joyride` (the Joyride-derived candidate: speed-scaled steering, throttle taper, brake-before-reverse, grip/drift lateral decay, handbrake). Independent of `?fallback=1` |
+| `/?handling=classic` | The previous Rapier-wheel controller, kept for comparison. Default is `joyride` (Joyride-style planar handling on top of Rapier suspension: speed-scaled steering, throttle taper, brake-before-reverse, grip/drift lateral decay, handbrake). Independent of `?fallback=1` |
+| `/?strip=N,dt` | Filmstrip: renders N frames spaced dt simulation-seconds apart into one grid, so one screenshot shows the motion of car and camera. Composes with `?script`, `?demo`, `?spawn`, `?preroll`, `?cam`. Example: `/?debug=1&strip=9,0.4&script=W:1,WA:3` |
 | `/?demo=1` | Replays the rehearsed route with the closed-loop driver from car.js; any driving key takes over |
 | `/preview.html` | Room preview harness (B track): orbit camera, view presets, live reload, lighting sliders with "copy JSON" for lighting.js |
 | `/preview.html?view=<name>` | Preset camera with all panels hidden, for screenshots. Names: `overview`, `west`, `ramp`, `crest`, `aisle`, `aisle-high`, `hero-wall`, `desk-lane`, `divider-gap`, `cabins`, `cups`, `under-desk`, `top`, `race`. Add `&noroute` to hide route markers, `&ceiling` to show the ceiling, `&race` to show the race markers in any view, `&panels=1` to keep the UI |
 
-Debug automation on the live page (A track): `?cam=x,y,z`, `?spawn=x,y,z`, `?preroll=<s>`, `?script=<timed key holds>`. See the comments in index.html.
+Debug automation on the live page (A track): `?cam=x,y,z`, `?spawn=x,y,z,heading`, `?preroll=<s>`, `?script=<timed key holds>` such as `W:3,WA:2` where each token is a set of keys held for that many seconds (`W A S D` drive, `_` = Space brake, `H` = Shift handbrake, `R` = recover). See the comments in index.html.
 
 ## Headless checks
 
@@ -36,8 +37,11 @@ Debug automation on the live page (A track): `?cam=x,y,z`, `?spawn=x,y,z`, `?pre
 node check-room.mjs              # live room + props: contract, bounds, ramp math, corridors, prop rest
 node check-room.mjs --fallback   # same for room.fallback.js
 node check-room.mjs --ramp=15 --detail=low
-node check-drive.mjs             # Rapier drive test: flat floor, ramp climb, spawn-to-desk route, both rooms
+node check-drive.mjs             # Rapier drive test, both rooms, joyride handling (default): 32 checks per pass
+node check-drive.mjs --handling=classic   # the previous controller: 26 checks
 node check-drive.mjs --live --ramp=15 --verbose
+node check-drive.mjs --trace     # per-step CSV traces to .traces/ plus jitter metrics next to the recorded classic baseline
+node check-drive.mjs --trace=straight,slide   # subset; scenarios: straight, uturn, ramp, lane, descent, reverse, slide
 ```
 
 Both check-room modes must exit 0 before a commit to room data. check-drive prints pass/fail per scenario.
@@ -48,6 +52,7 @@ check-room runs the corridor and race checks on **both** rooms (room.fallback.js
 ./shot.sh out.png "http://localhost:8000/preview.html?view=overview" [budget_ms] [WxH]   # headless Chrome screenshot (default 1600,900)
 ./capture.sh b3            # nine repeatable live views into .shots/b3-*.png: spawn, straight, under-desk, ramp foot, crest, desk lane, descent, cups, fallback
 ./capture.sh b3-proj 1024,768
+./capture.sh joy 1024,768 "handling=joyride"   # optional third argument is appended to every URL (any query, e.g. shadows=1)
 ```
 
 Compare a capture set against the tagged baseline (`git tag baseline-mvp`, shots `.shots/base-*.png`) before and after any visual change.
