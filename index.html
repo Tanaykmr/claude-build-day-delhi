@@ -115,7 +115,11 @@
       } catch (error) {
         throw new Error(`Could not load ${modulePath}${fallback ? '' : ' or ./props.js'}. Track B must supply the data modules. ${error.message}`);
       }
-      const { ROOM, SPAWN } = roomModule, { PROPS } = propsModule;
+      const { ROOM } = roomModule, { PROPS } = propsModule;
+      let { SPAWN } = roomModule;
+      // Debug hook: ?spawn=x,y,z,heading overrides the start (and R) position for scripted screenshots.
+      const spawnOverride = (params.get('spawn') || '').split(',').map(Number);
+      if (spawnOverride.length === 4 && spawnOverride.every(Number.isFinite)) SPAWN = { pos: spawnOverride.slice(0, 3), heading: spawnOverride[3] };
       validateData(ROOM, SPAWN, PROPS);
       detail.textContent = 'Loading renderer and physics…';
       [THREE, { default: RAPIER }] = await Promise.all([
@@ -202,7 +206,25 @@
       });
 
       const held = new Set(), drivingKeys = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyR']);
-      let resetRequested = false, paused = document.hidden || !document.hasFocus();
+      // Debug hook: ?script=W:2.5,A:0.6,WA:1,_:1,R:0.1 holds the listed keys for that many seconds of
+      // simulation time, one segment after another (_ = Space). Keyboard input still works alongside.
+      const SCRIPT_KEYS = { W: 'KeyW', A: 'KeyA', S: 'KeyS', D: 'KeyD', _: 'Space', R: 'KeyR' };
+      const script = (params.get('script') || '').split(',').filter(Boolean).map(token => {
+        const [keys, seconds] = token.split(':');
+        return { codes: [...keys.toUpperCase()].map(k => SCRIPT_KEYS[k]).filter(Boolean), steps: Math.max(1, Math.round(Number(seconds || 0) / STEP)) };
+      });
+      const scripted = new Set();
+      let scriptIndex = 0, scriptStep = 0;
+      function advanceScript() {
+        scripted.clear();
+        while (scriptIndex < script.length && scriptStep >= script[scriptIndex].steps) { scriptIndex++; scriptStep = 0; }
+        if (scriptIndex >= script.length) return;
+        const segment = script[scriptIndex];
+        if (scriptStep === 0 && segment.codes.includes('KeyR')) resetRequested = true;
+        segment.codes.forEach(code => scripted.add(code));
+        scriptStep++;
+      }
+      let resetRequested = false, paused = script.length ? false : document.hidden || !document.hasFocus();
       let accumulator = 0, lastTime = null, snapCamera = true;
       function clearInput() { held.clear(); resetRequested = false; }
       function setPaused(value) {
@@ -227,9 +249,10 @@
       document.addEventListener('visibilitychange', () => setPaused(document.hidden || !document.hasFocus()));
       resume.addEventListener('click', () => { renderer.domElement.focus(); setPaused(false); });
       renderer.domElement.addEventListener('pointerdown', () => { renderer.domElement.focus(); if (!document.hidden) setPaused(false); });
-      const down = (...codes) => codes.some(code => held.has(code));
+      const down = (...codes) => codes.some(code => held.has(code) || scripted.has(code));
       function recover() { clearInput(); resetCar(car, SPAWN); snapCamera = true; }
       function step() {
+        advanceScript();
         if (resetRequested) recover();
         stepVehicle(car, {
           throttle: Number(down('KeyW', 'ArrowUp')) - Number(down('KeyS', 'ArrowDown')),
@@ -253,7 +276,11 @@
       const forward = new THREE.Vector3(), anchor = new THREE.Vector3(), desired = new THREE.Vector3();
       const viewTarget = new THREE.Vector3(), rayDirection = new THREE.Vector3(), raycaster = new THREE.Raycaster();
       let lastHeading = SPAWN.heading;
+      // Debug hook: ?cam=x,y,z fixes the camera at a world position, always looking at the car.
+      const fixedCamera = (params.get('cam') || '').split(',').map(Number);
+      const hasFixedCamera = fixedCamera.length === 3 && fixedCamera.every(Number.isFinite);
       function updateCamera(dt) {
+        if (hasFixedCamera) { camera.position.set(...fixedCamera); camera.lookAt(carMesh.position); return; }
         forward.set(0, 0, 1).applyQuaternion(carMesh.quaternion);
         if (Math.hypot(forward.x, forward.z) > .1) lastHeading = Math.atan2(forward.x, forward.z);
         forward.set(Math.sin(lastHeading), 0, Math.cos(lastHeading));
@@ -280,6 +307,9 @@
       const debug = params.has('debug'); diagnostics.hidden = !debug;
       let sampleTime = 0, frames = 0;
       world.step(); // Populate the query pipeline before the first suspension ray cast.
+      // Debug hook: ?preroll=seconds advances the simulation (and any ?script) before the first frame.
+      const preroll = Math.min(120, Number(params.get('preroll')) || 0);
+      for (let i = 0; i < Math.round(preroll / STEP); i++) step();
       syncMeshes(); updateCamera(0);
       setPaused(paused);
       function frame(now) {
