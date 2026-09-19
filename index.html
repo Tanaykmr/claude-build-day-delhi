@@ -488,7 +488,7 @@
           actions.hidden = false; resume.hidden = false;
         }
       }
-      onMenuChange = open => { if (!open) { renderer.domElement.focus(); hud.showHint(); } setPaused(open); };
+      onMenuChange = open => { if (!open) renderer.domElement.focus(); setPaused(open); };
       window.addEventListener('keydown', e => {
         if (!drivingKeys.has(e.code) || e.target.closest?.('button, a, input, textarea')) return;
         e.preventDefault();
@@ -921,11 +921,6 @@
             // Aim a little left of the car (its screen-right is (-dz, dx)/L) so it sits in the right third, clear of the title.
             camera.lookAt(p.x + dz / L * .14 + dx / L * .12, p.y + .005, p.z - dx / L * .14 + dz / L * .12);
             snapCamera = true;
-          }
-          {
-            const p = car.body.translation();
-            hud.update({ x: p.x, y: p.y, z: p.z, heading: lastHeading, speed: forwardSpeed(car), dt,
-              throttle: Number(down('KeyW', 'ArrowUp')) - Number(down('KeyS', 'ArrowDown')), brake: down('Space') });
           }
           renderer.render(scene, camera);
           frames++; sampleTime += dt;

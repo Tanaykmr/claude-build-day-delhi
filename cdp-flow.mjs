@@ -54,9 +54,13 @@ ws.onmessage = ({ data }) => {
 const send = (method, params = {}) => new Promise((res, rej) => { const i = ++id; pending.set(i, { res, rej }); ws.send(JSON.stringify({ id: i, method, params })); });
 const evaluate = async expr => (await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true })).result.value;
 const key = async (code, keyName, vk, holdMs = 60) => {
-  await send('Input.dispatchKeyEvent', { type: 'keyDown', code, key: keyName, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
+  // A keyDown without `text` never performs native activation, so a focused button ignores Enter and the menu
+  // (which deliberately defers to native activation for buttons and links) looks broken in the harness only.
+  const text = keyName === 'Enter' ? '\r' : keyName.length === 1 ? keyName : undefined;
+  const base = { code, key: keyName, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, ...(text ? { text, unmodifiedText: text } : {}) };
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', ...base });
   await sleep(holdMs);
-  await send('Input.dispatchKeyEvent', { type: 'keyUp', code, key: keyName, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
 };
 const shot = async name => {
   const { data } = await send('Page.captureScreenshot', { format: 'png' });
