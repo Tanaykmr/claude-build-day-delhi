@@ -347,7 +347,7 @@
         renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5)); renderer.setSize(innerWidth, innerHeight);
       });
       const meter = document.querySelector('#meter'), diagnostics = document.querySelector('#diagnostics');
-      const debug = params.has('debug'); diagnostics.hidden = !debug;
+      const debug = params.has('debug'); // The panel stays hidden until its first sample so it never renders as an empty box.
       let sampleTime = 0, frames = 0;
       world.step(); // Populate the query pipeline before the first suspension ray cast.
       // Debug hook: ?preroll=seconds advances the simulation (and any ?script) before the first frame.
@@ -371,6 +371,7 @@
           if (sampleTime >= .25) {
             meter.textContent = `${Math.abs(forwardSpeed(car)).toFixed(2)} m/s${fallback ? ' · simple room' : ''}`;
             if (debug) {
+              diagnostics.hidden = false;
               const p = car.body.translation();
               diagnostics.textContent = `${Math.round(frames / sampleTime)} fps · ${renderer.info.render.calls} draws\n${renderer.info.render.triangles} triangles · ${ROOM.length} fixed · ${PROPS.length} props\nposition ${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)}\nwheel contacts ${WHEELS.map((_, i) => +car.controller.wheelIsInContact(i)).join(' ')}`;
             }

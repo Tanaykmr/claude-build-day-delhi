@@ -6,9 +6,12 @@
 //   node check-drive.mjs --live     # only room.js       --fallback  only room.fallback.js
 //   node check-drive.mjs --verbose  # per-0.25 s telemetry
 //   node check-drive.mjs --car '{"stiffness":300}'   # override CAR fields for tuning sweeps
+//   node check-drive.mjs --live --ramp=15            # gentler ramp angle (room.js ?ramp= knob)
 import RAPIER from '@dimforge/rapier3d-compat';
 
 const argv = process.argv.slice(2);
+const rampArg = argv.find(a => a.startsWith('--ramp='));
+if (rampArg) globalThis.location = { search: `?ramp=${rampArg.slice(7)}` }; // room.js reads ?ramp= from location.search
 const carArg = argv.indexOf('--car');
 if (carArg >= 0) globalThis.CAR_OVERRIDE = JSON.parse(argv[carArg + 1]);
 const {
