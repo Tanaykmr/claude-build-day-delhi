@@ -184,6 +184,8 @@
             : new THREE.MeshLambertMaterial({ color: hex });
           const glow = EMISSIVE[`#${hex.toString(16).padStart(6, '0')}`];
           if (glow && LIGHTING) { mat.emissive = new THREE.Color(glow.color); mat.emissiveIntensity = glow.intensity ?? 1; }
+          // The ceiling's visible face points down, so no light above it ever reaches it; let it carry its own color.
+          if (tag === 'ceiling' && LIGHTING) { mat.emissive = new THREE.Color(hex); mat.emissiveIntensity = .55; }
           materials.set(key, mat);
         }
         return materials.get(key);
@@ -241,6 +243,32 @@
       carBox([.04, .004, .009], [0, .009, .052], '#fff3cc'); // Front marks +Z.
       const wheelGeometry = new THREE.CylinderGeometry(CAR.wheelR, CAR.wheelR, CAR.wheelWidth, 12);
       wheelGeometry.rotateZ(Math.PI / 2); // Cylinder axle is local X.
+      // Cheap grounding shadow: a soft dark ellipse laid on whatever surface is under the car (ray cast down).
+      const blobCanvas = document.createElement('canvas'); blobCanvas.width = blobCanvas.height = 128;
+      const blobContext = blobCanvas.getContext('2d');
+      const gradient = blobContext.createRadialGradient(64, 64, 8, 64, 64, 64);
+      gradient.addColorStop(0, 'rgba(0,0,0,.55)'); gradient.addColorStop(.6, 'rgba(0,0,0,.3)'); gradient.addColorStop(1, 'rgba(0,0,0,0)');
+      blobContext.fillStyle = gradient; blobContext.fillRect(0, 0, 128, 128);
+      const blob = new THREE.Mesh(new THREE.PlaneGeometry(CAR.wid + 2 * CAR.wheelWidth + .05, CAR.len + .04),
+        new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(blobCanvas), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+      blob.geometry.rotateX(-Math.PI / 2); // Plane faces +Y in car space; car forward is +Z so its long axis is Z.
+      blob.renderOrder = 1;
+      scene.add(blob);
+      const groundRay = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
+      const surfaceNormal = new THREE.Vector3(), yAxis = new THREE.Vector3(0, 1, 0), blobTilt = new THREE.Quaternion();
+      function placeBlob() {
+        const p = car.body.translation();
+        groundRay.origin = p;
+        const hit = world.castRayAndGetNormal(groundRay, .6, true, undefined, undefined, undefined, car.body);
+        blob.visible = !!hit;
+        if (!hit) return;
+        surfaceNormal.set(hit.normal.x, hit.normal.y, hit.normal.z);
+        blob.position.set(p.x, p.y - hit.timeOfImpact, p.z).addScaledVector(surfaceNormal, .002);
+        // Lie flat on the surface, spun to the car's heading.
+        blobTilt.setFromUnitVectors(yAxis, surfaceNormal);
+        blob.quaternion.setFromAxisAngle(yAxis, lastHeading).premultiply(blobTilt);
+        blob.material.opacity = Math.max(0, Math.min(1, 1.2 - (hit.timeOfImpact - .02) / .12));
+      }
       const wheelMeshes = WHEELS.map(() => {
         const pivot = new THREE.Group();
         const tire = new THREE.Mesh(wheelGeometry, material('#17191c', 'chair'));
@@ -315,6 +343,7 @@
           tire.rotation.x = -(car.controller.wheelRotation(i) || 0);
         });
         for (const { body, mesh } of props) { mesh.position.copy(body.translation()); mesh.quaternion.copy(body.rotation()); }
+        placeBlob();
       }
       const forward = new THREE.Vector3(), anchor = new THREE.Vector3(), desired = new THREE.Vector3();
       const viewTarget = new THREE.Vector3(), rayDirection = new THREE.Vector3(), raycaster = new THREE.Raycaster();
