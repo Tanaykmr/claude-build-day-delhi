@@ -74,21 +74,31 @@ try {
   await send('Runtime.enable'); await send('Page.enable');
   await waitFor(`!!document.querySelector('.stm-btn.primary.is-ready')`, 'menu ready');
   await sleep(1200); // let the reveal animation finish
-  const state1 = await evaluate(`({ paused: document.body.classList.contains('stm-open'), label: document.querySelector('[data-primary-label]').textContent, status: document.querySelector('[data-status-text]').textContent, canvas: !!document.querySelector('canvas:not(.stm-bg)') })`);
+  const state1 = await evaluate(`({ paused: document.body.classList.contains('stm-open'), label: document.querySelector('[data-primary-label]').textContent, status: document.querySelector('[data-status-text]').textContent, canvas: !!document.querySelector('canvas:not(.stm-bg)'), map: document.querySelector('[data-m-boxes]').textContent })`);
   console.log('menu state', state1);
   await shot('flow-1-menu-ready');
 
+  await key('ArrowRight', 'ArrowRight', 39); // Create page
+  await sleep(1100);
+  const state1b = await evaluate(`({ slide: document.querySelector('.stm').dataset.slide, maps: document.querySelectorAll('.stm-maprow').length })`);
+  console.log('create page', state1b);
+  if (state1b.slide !== 'create') { failed = true; console.error('FAIL: ArrowRight did not open the Create page'); }
+  await shot('flow-1b-create');
+  await key('Escape', 'Escape', 27); // back to Start
+  await sleep(800);
+
   await key('Enter', 'Enter', 13);
   await sleep(1500);
-  const state2 = await evaluate(`({ menuHidden: document.querySelector('.stm').hidden, bodyOpen: document.body.classList.contains('stm-open'), overlayHidden: document.querySelector('#overlay').hidden, hudVisible: getComputedStyle(document.querySelector('header')).visibility })`);
+  const state2 = await evaluate(`({ menuHidden: document.querySelector('.stm').hidden, bodyOpen: document.body.classList.contains('stm-open'), overlayHidden: document.querySelector('#overlay').hidden, headerGone: getComputedStyle(document.querySelector('body > header')).display === 'none', hud: !!document.querySelector('.hud'), hudOpacity: getComputedStyle(document.querySelector('.hud')).opacity })`);
   console.log('after Enter', state2);
-  if (!state2.menuHidden || state2.bodyOpen || !state2.overlayHidden) { failed = true; console.error('FAIL: menu did not hand over to the game cleanly'); }
-  await shot('flow-2-driving');
+  if (!state2.menuHidden || state2.bodyOpen || !state2.overlayHidden || !state2.headerGone || !state2.hud) { failed = true; console.error('FAIL: menu did not hand over to the game cleanly, or the HUD is missing'); }
 
   await key('KeyW', 'w', 87, 900); // drive forward briefly
   await sleep(600);
-  const speed = await evaluate(`document.querySelector('#meter').textContent`);
-  console.log('meter after W', speed);
+  const speed = await evaluate(`({ ms: document.querySelector('[data-ms]').textContent, kmh: document.querySelector('[data-kmh]').textContent, gear: document.querySelector('[data-gear]').textContent })`);
+  console.log('HUD after W', speed);
+  if (parseFloat(speed.ms) < 0.3) { failed = true; console.error('FAIL: the car did not move on W'); }
+  await shot('flow-2-driving');
 
   await key('Escape', 'Escape', 27);
   await sleep(1200);

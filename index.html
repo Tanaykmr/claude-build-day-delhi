@@ -62,6 +62,8 @@
       forwardSpeed, validBody, needsRecovery, eulerToQuaternion, rampGeometry, demoPhases, createDriver, carState,
     } from './car.js';
     import { mountMenu } from './menu.js';
+    import { mountHud } from './hud.js';
+    import { loadMap } from './maps.js';
     let THREE, RAPIER;
     const CAMERA = Object.freeze({ behind: .35, height: .10, lookAhead: .12, near: .005, far: 50, smoothing: 10 });
     const finiteVector = (a, n) => Array.isArray(a) && a.length === n && a.every(Number.isFinite);
@@ -115,13 +117,21 @@
       if (fallback) { modeLink.textContent = 'Full office'; modeLink.href = location.pathname; }
       const modulePath = fallback ? './room.fallback.js' : './room.js';
       let roomModule, propsModule;
-      try {
+      // ?map=<id> drives a map the user generated from photos (Track B, maps.js), stored in this browser.
+      const customId = params.get('map'), custom = customId ? loadMap(customId) : null;
+      if (customId && !custom) throw new Error(`Map "${customId}" is not saved in this browser. Open the menu's Create page to generate one, or load the built-in office.`);
+      if (custom) {
+        roomModule = { ROOM: custom.ROOM, SPAWN: custom.SPAWN };
+        propsModule = { PROPS: custom.PROPS || [] };
+      } else try {
         // Do not import live modules at all when fallback is selected.
         roomModule = await import(modulePath);
         propsModule = fallback ? { PROPS: [] } : await import('./props.js');
       } catch (error) {
         throw new Error(`Could not load ${modulePath}${fallback ? '' : ' or ./props.js'}. Track B must supply the data modules. ${error.message}`);
       }
+      const mapName = custom?.name || (fallback ? 'Simple room' : 'The Office');
+      const mapSize = custom?.size || (roomModule.W && roomModule.D ? [roomModule.W, roomModule.D] : null);
       const { ROOM } = roomModule, { PROPS } = propsModule;
       let { SPAWN } = roomModule;
       // Debug hook: ?spawn=x,y,z,heading overrides the start (and R) position for scripted screenshots.
@@ -281,6 +291,9 @@
         return { pivot, tire };
       });
 
+      // In-game HUD (Track B, hud.js): minimap and speedometer only; the header/footer panels are hidden while it is mounted.
+      const routeMarkers = roomModule.ROUTE ? [{ pos: roomModule.ROUTE.rampFoot, label: 'RAMP', color: '#ffb347' }, { pos: roomModule.ROUTE.cups, label: 'CUPS', color: '#ffffff' }] : [];
+      const hud = mountHud({ ROOM, SPAWN, mapName, markers: routeMarkers, propPositions: () => props.map(p => p.mesh.position) });
       const held = new Set(), drivingKeys = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyR']);
       // Debug hook: ?script=W:2.5,A:0.6,WA:1,_:1,R:0.1 holds the listed keys for that many seconds of
       // simulation time, one segment after another (_ = Space). Keyboard input still works alongside.
@@ -320,7 +333,7 @@
           actions.hidden = false; resume.hidden = false;
         }
       }
-      onMenuChange = open => { if (!open) renderer.domElement.focus(); setPaused(open); };
+      onMenuChange = open => { if (!open) { renderer.domElement.focus(); hud.showHint(); } setPaused(open); };
       window.addEventListener('keydown', e => {
         if (!drivingKeys.has(e.code) || e.target.closest?.('button, a, input, textarea')) return;
         e.preventDefault();
@@ -401,7 +414,7 @@
       if (menu) for (let i = 0; i < 45; i++) step(); // settle the car onto its wheels before the menu cinematic shows it
       syncMeshes(); updateCamera(0);
       setPaused(paused);
-      menu?.setReady();
+      menu?.setReady({ name: mapName, boxes: ROOM.length, props: PROPS.length, size: mapSize });
       function frame(now) {
         if (failed) return;
         try {
@@ -422,6 +435,11 @@
             // Aim a little left of the car (its screen-right is (-dz, dx)/L) so it sits in the right third, clear of the title.
             camera.lookAt(p.x + dz / L * .14 + dx / L * .12, p.y + .005, p.z - dx / L * .14 + dz / L * .12);
             snapCamera = true;
+          }
+          {
+            const p = car.body.translation();
+            hud.update({ x: p.x, y: p.y, z: p.z, heading: lastHeading, speed: forwardSpeed(car), dt,
+              throttle: Number(down('KeyW', 'ArrowUp')) - Number(down('KeyS', 'ArrowDown')), brake: down('Space') });
           }
           renderer.render(scene, camera);
           frames++; sampleTime += dt;

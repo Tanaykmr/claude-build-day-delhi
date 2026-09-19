@@ -13,7 +13,11 @@ Serve over HTTP. `file://` does not work (multi-file module app, import map, WAS
 
 Controls: **WASD / arrows** drive, **Space** brake, **R** recover to spawn. Losing window focus clears input. Reload the page to restore every prop.
 
-The page opens on the **menu** (`menu.js` + `menu.css`): three pages (Start, Phases, Briefing) over a live cinematic of the parked car while the engine boots behind it. **Enter** or **Drive** starts, **Esc** pauses back into the menu, **M** toggles the music, **F** fullscreen, **← →** switch pages. Music is "Pamgaea" by Kevin MacLeod (CC BY 4.0, see `audio/CREDITS.txt`); it starts on the first click or key press because browsers block autoplay, and it ducks to a low level in the game. Phases 2 and 3 are shown locked. `?nomenu=1` boots straight into the game; every debug URL below already does.
+The page opens on the **menu** (`menu.js` + `menu.css`): four pages (Start, Create, Phases, Briefing) over a live cinematic of the parked car while the engine boots behind it. **Enter** or **Drive** starts, **Esc** pauses back into the menu, **M** toggles the music, **F** fullscreen, **← →** switch pages. Music is "Pamgaea" by Kevin MacLeod (CC BY 4.0, see `audio/CREDITS.txt`); it starts on the first click or key press because browsers block autoplay, and it ducks to a low level in the game. `?nomenu=1` boots straight into the game; every debug URL below already does.
+
+**Create a map** (`maps.js`): drop 5 to 10 photos of a room, paste an Anthropic API key, pick Claude Opus 5 or Sonnet 5, generate. The browser downsizes the photos and calls the Claude API directly with the official SDK (pinned on jsDelivr); Claude answers through a strict-schema tool so the layout is valid JSON, `validateMap()` repairs what it can (missing floor or walls, a spawn inside furniture) and the map is saved in `localStorage`. **Drive this map** opens `?map=<id>&go=1`. The key is sent only to `api.anthropic.com`; "remember" keeps it in this browser's `localStorage`.
+
+**In game** (`hud.js` + `hud.css`) the screen shows only a rotating minimap bottom-left (`minimap.js` rasterizes the room top-down once) and a radial speedometer bottom-right in scale km/h (the 1:36 car at 1.2 m/s reads 155). The old title, meter and controls panels are hidden; a controls hint fades in for six seconds after the menu closes.
 
 ## URLs
 
@@ -25,7 +29,8 @@ The page opens on the **menu** (`menu.js` + `menu.css`): three pages (Start, Pha
 | `/?ramp=15` | Gentler ramp (default 17°). Benches shift east automatically so the approach stays 1.25 m. Any value 12–18.5 |
 | `/?detail=low` | Drops monitors, divider trim and most chairs (about 450 fewer boxes) for slow machines |
 | `/?shadows=1` | Directional shadows (off by default per the PRD) |
-| `/?menu=phases` · `/?menu=briefing` | Open the menu on that page (screenshots, deep links) |
+| `/?menu=create` · `/?menu=phases` · `/?menu=briefing` | Open the menu on that page (screenshots, deep links) |
+| `/?map=<id>` | Drive a map generated on the Create page (stored in this browser). Add `&go=1` to skip the menu once loaded |
 | `/?nomenu=1` | Skip the menu and boot straight into the game |
 | `/preview.html` | Room preview harness (B track): orbit camera, view presets, live reload, lighting sliders with "copy JSON" for lighting.js |
 | `/preview.html?view=<name>` | Preset camera with all panels hidden, for screenshots. Names: `overview`, `west`, `ramp`, `crest`, `aisle`, `aisle-high`, `hero-wall`, `desk-lane`, `divider-gap`, `cabins`, `cups`, `under-desk`, `top`. Add `&noroute` to hide route markers, `&ceiling` to show the ceiling, `&panels=1` to keep the UI |
@@ -89,5 +94,8 @@ Knocking the desk-lane cups off the edge on the way east is optional; they sit a
 | `room.js`, `props.js`, `room.fallback.js` | B | Room data (fixed cuboids), dynamic props, tested simple room |
 | `lighting.js` | B | Lighting, per-tag material and emissive direction consumed by index.html |
 | `preview.html`, `check-room.mjs`, `shot.sh` | B | Preview harness, geometry checks, screenshot helper |
-| `menu.js`, `menu.css`, `audio/` | B | Front-end menu (pages, music, UI sounds, cinematic hook). index.html mounts it with one call; `?nomenu=1` and all debug URLs bypass it |
+| `menu.js`, `menu.css`, `audio/` | B | Front-end menu (Start, Create, Phases, Briefing; music, UI sounds, cinematic hook). index.html mounts it with one call; `?nomenu=1` and all debug URLs bypass it |
+| `maps.js` | B | User maps: photo → layout generation with the Claude API (strict tool schema), validation/repair, localStorage |
+| `minimap.js`, `hud.js`, `hud.css` | B | Top-down room rasterizer, in-game HUD (rotating minimap, radial speedometer, fading hint) |
+| `cdp-flow.mjs` | B | Headless Chrome flow check over DevTools (menu → create page → drive → pause → resume) |
 | `prd.md` | both | The validated build spec |
