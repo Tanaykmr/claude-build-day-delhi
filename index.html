@@ -61,9 +61,15 @@
       CAR, STEP, WHEELS, ROOM_FRICTION, createWorld, createCar, roomColliderDesc, stepVehicle, resetCar,
       forwardSpeed, validBody, needsRecovery, eulerToQuaternion, rampGeometry, demoPhases, createDriver, carState,
     } from './car.js';
+    import { mountMenu } from './menu.js';
     let THREE, RAPIER;
     const CAMERA = Object.freeze({ behind: .35, height: .10, lookAhead: .12, near: .005, far: 50, smoothing: 10 });
     const finiteVector = (a, n) => Array.isArray(a) && a.length === n && a.every(Number.isFinite);
+    // Front-end menu (Track B, menu.js) shows at once and the engine boots behind it. Debug and automation
+    // URLs skip it and drop straight into the game, so shot.sh and ?demo=1 behave exactly as before.
+    const autoStart = ['demo', 'script', 'cam', 'spawn', 'preroll', 'nomenu'].some(k => new URLSearchParams(location.search).has(k));
+    let onMenuChange = () => {};
+    const menu = autoStart ? null : mountMenu({ statusEl: document.querySelector('#detail'), onChange: open => onMenuChange(open) });
 
     function validateData(ROOM, SPAWN, PROPS) {
       if (!Array.isArray(ROOM) || !ROOM.length) throw new Error('ROOM must be a nonempty array.');
@@ -90,6 +96,7 @@
     function showError(error) {
       failed = true;
       console.error(error);
+      menu?.close({ force: true }); // the error panel must be visible, not the menu
       overlay.hidden = false;
       statusTitle.textContent = 'The demo could not continue';
       detail.textContent = `${error.message || error}\n\nServe this directory over HTTP. Check the selected room module and network connection, then reload.`;
@@ -303,14 +310,17 @@
       let accumulator = 0, lastTime = null, snapCamera = true;
       function clearInput() { held.clear(); resetRequested = false; }
       function setPaused(value) {
-        clearInput(); paused = value; accumulator = 0; lastTime = null;
+        // The menu is a pause state of its own: physics stays frozen while it is open and it covers the overlay.
+        const menuOpen = !!menu?.isOpen();
+        clearInput(); paused = value || menuOpen; accumulator = 0; lastTime = null;
         if (failed) return;
-        overlay.hidden = !paused;
-        if (paused) {
+        overlay.hidden = !paused || menuOpen;
+        if (paused && !menuOpen) {
           statusTitle.textContent = 'Paused'; detail.textContent = 'Focus the game to resume. Driving keys have been released.';
           actions.hidden = false; resume.hidden = false;
         }
       }
+      onMenuChange = open => { if (!open) renderer.domElement.focus(); setPaused(open); };
       window.addEventListener('keydown', e => {
         if (!drivingKeys.has(e.code) || e.target.closest?.('button, a, input, textarea')) return;
         e.preventDefault();
@@ -388,8 +398,10 @@
       // Debug hook: ?preroll=seconds advances the simulation (and any ?script) before the first frame.
       const preroll = Math.min(120, Number(params.get('preroll')) || 0);
       for (let i = 0; i < Math.round(preroll / STEP); i++) step();
+      if (menu) for (let i = 0; i < 45; i++) step(); // settle the car onto its wheels before the menu cinematic shows it
       syncMeshes(); updateCamera(0);
       setPaused(paused);
+      menu?.setReady();
       function frame(now) {
         if (failed) return;
         try {
@@ -400,6 +412,16 @@
             while (accumulator >= STEP && steps < 6) { step(); accumulator -= STEP; steps++; }
             if (steps === 6) accumulator = 0;
             syncMeshes(); updateCamera(dt);
+          }
+          if (menu?.isOpen()) {
+            // Cinematic: a slow, low sweep behind the parked car looking east into the office. The chase
+            // camera snaps back the moment the menu closes.
+            const t = now / 1000, p = carMesh.position, a = -Math.PI / 2 + Math.sin(t * .21) * .7, r = .40;
+            camera.position.set(p.x + Math.sin(a) * r, p.y + .10 + Math.sin(t * .33) * .015, p.z + Math.cos(a) * r);
+            const dx = p.x - camera.position.x, dz = p.z - camera.position.z, L = Math.hypot(dx, dz) || 1;
+            // Aim a little left of the car (its screen-right is (-dz, dx)/L) so it sits in the right third, clear of the title.
+            camera.lookAt(p.x + dz / L * .14 + dx / L * .12, p.y + .005, p.z - dx / L * .14 + dz / L * .12);
+            snapCamera = true;
           }
           renderer.render(scene, camera);
           frames++; sampleTime += dt;

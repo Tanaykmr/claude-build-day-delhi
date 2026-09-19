@@ -13,6 +13,8 @@ Serve over HTTP. `file://` does not work (multi-file module app, import map, WAS
 
 Controls: **WASD / arrows** drive, **Space** brake, **R** recover to spawn. Losing window focus clears input. Reload the page to restore every prop.
 
+The page opens on the **menu** (`menu.js` + `menu.css`): three pages (Start, Phases, Briefing) over a live cinematic of the parked car while the engine boots behind it. **Enter** or **Drive** starts, **Esc** pauses back into the menu, **M** toggles the music, **F** fullscreen, **← →** switch pages. Music is "Pamgaea" by Kevin MacLeod (CC BY 4.0, see `audio/CREDITS.txt`); it starts on the first click or key press because browsers block autoplay, and it ducks to a low level in the game. Phases 2 and 3 are shown locked. `?nomenu=1` boots straight into the game; every debug URL below already does.
+
 ## URLs
 
 | URL | What it does |
@@ -23,6 +25,8 @@ Controls: **WASD / arrows** drive, **Space** brake, **R** recover to spawn. Losi
 | `/?ramp=15` | Gentler ramp (default 17°). Benches shift east automatically so the approach stays 1.25 m. Any value 12–18.5 |
 | `/?detail=low` | Drops monitors, divider trim and most chairs (about 450 fewer boxes) for slow machines |
 | `/?shadows=1` | Directional shadows (off by default per the PRD) |
+| `/?menu=phases` · `/?menu=briefing` | Open the menu on that page (screenshots, deep links) |
+| `/?nomenu=1` | Skip the menu and boot straight into the game |
 | `/preview.html` | Room preview harness (B track): orbit camera, view presets, live reload, lighting sliders with "copy JSON" for lighting.js |
 | `/preview.html?view=<name>` | Preset camera with all panels hidden, for screenshots. Names: `overview`, `west`, `ramp`, `crest`, `aisle`, `aisle-high`, `hero-wall`, `desk-lane`, `divider-gap`, `cabins`, `cups`, `under-desk`, `top`. Add `&noroute` to hide route markers, `&ceiling` to show the ceiling, `&panels=1` to keep the UI |
 
@@ -39,6 +43,10 @@ node check-drive.mjs --live --ramp=15 --verbose
 ```
 
 Both check-room modes must exit 0 before a commit to room data. check-drive prints pass/fail per scenario.
+
+```sh
+node cdp-flow.mjs http://localhost:8000/ .shots   # headless Chrome over DevTools: menu ready → Enter drives → Esc pauses → Esc resumes, screenshots each state, fails on page errors
+```
 
 ```sh
 ./shot.sh out.png "http://localhost:8000/preview.html?view=overview"   # headless Chrome screenshot
@@ -81,4 +89,5 @@ Knocking the desk-lane cups off the edge on the way east is optional; they sit a
 | `room.js`, `props.js`, `room.fallback.js` | B | Room data (fixed cuboids), dynamic props, tested simple room |
 | `lighting.js` | B | Lighting, per-tag material and emissive direction consumed by index.html |
 | `preview.html`, `check-room.mjs`, `shot.sh` | B | Preview harness, geometry checks, screenshot helper |
+| `menu.js`, `menu.css`, `audio/` | B | Front-end menu (pages, music, UI sounds, cinematic hook). index.html mounts it with one call; `?nomenu=1` and all debug URLs bypass it |
 | `prd.md` | both | The validated build spec |

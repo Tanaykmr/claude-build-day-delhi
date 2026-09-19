@@ -1,0 +1,14 @@
+Menu music
+==========
+
+menu-theme.mp3
+  "Pamgaea" Kevin MacLeod (incompetech.com)
+  Licensed under Creative Commons: By Attribution 4.0 License
+  http://creativecommons.org/licenses/by/4.0/
+  Source: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Pamgaea.mp3
+
+Attribution is shown in-game on the Briefing slide of the menu (menu.js).
+Re-encoded to 160 kbps for the repository; no other changes.
+
+UI sounds (hover tick, confirm, slide whoosh) are synthesized at runtime with the
+Web Audio API in menu.js. No samples are used.
