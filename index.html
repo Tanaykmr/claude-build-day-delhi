@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Snap the Room</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; background: #24272b; color: #fff; }
+    canvas { display: block; width: 100vw; height: 100vh; outline: none; }
+    header, footer { position: fixed; left: 24px; right: 24px; pointer-events: none; }
+    header { top: 20px; display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+    h1 { margin: 0; font-size: clamp(24px, 3vw, 38px); letter-spacing: -.04em; }
+    .panel { background: #171b20e8; border: 1px solid #ffffff26; border-radius: 12px; padding: 14px 18px; }
+    .subtitle { color: #c6ccd2; margin: 4px 0 0; font-size: 15px; }
+    #meter { font-variant-numeric: tabular-nums; font-size: 18px; white-space: nowrap; }
+    footer { bottom: 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    #controls { font-size: clamp(15px, 1.7vw, 20px); }
+    kbd { font: inherit; font-weight: 650; color: #ffe19d; }
+    a, button { pointer-events: auto; color: #fff; }
+    a:focus-visible, button:focus-visible { outline: 3px solid #ffc56b; outline-offset: 4px; }
+    button { font: inherit; cursor: pointer; background: #424951; border: 1px solid #777f88; border-radius: 7px; padding: 10px 16px; }
+    #overlay { position: fixed; inset: 0; display: grid; place-items: center; background: #14181b70; }
+    #overlay[hidden] { display: none; }
+    #message { width: min(560px, calc(100vw - 40px)); padding: 28px; }
+    #message h2 { margin: 0 0 12px; font-size: 26px; }
+    #detail { white-space: pre-wrap; overflow-wrap: anywhere; color: #d5dbe1; line-height: 1.5; }
+    #actions { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+    #actions[hidden] { display: none; }
+    #diagnostics { position: fixed; top: 115px; left: 24px; white-space: pre; font: 12px monospace; pointer-events: none; }
+    @media (max-width: 650px) { header, footer { left: 12px; right: 12px; } footer { flex-wrap: wrap; } .panel { padding: 10px 12px; } }
+  </style>
+  <script type="importmap">
+    { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+    } }
+  </script>
+</head>
+<body>
+  <header>
+    <div class="panel"><h1>Snap the Room</h1><p class="subtitle">A little car. A familiar office.</p></div>
+    <div class="panel" id="meter">0.00 m/s</div>
+  </header>
+  <footer>
+    <div class="panel" id="controls"><kbd>WASD / arrows</kbd> drive &nbsp;·&nbsp; <kbd>Space</kbd> brake &nbsp;·&nbsp; <kbd>R</kbd> recover</div>
+    <a class="panel" id="mode-link" href="?fallback=1">Simple room</a>
+  </footer>
+  <div id="overlay"><section class="panel" id="message" role="status" aria-live="polite">
+    <h2 id="status-title">Loading…</h2>
+    <p id="detail">Starting the room and car.</p>
+    <div id="actions" hidden><button id="resume" hidden>Resume driving</button><button id="reload">Reload demo</button><a href="?fallback=1">Try simple room</a></div>
+  </section></div>
+  <pre id="diagnostics" class="panel" hidden></pre>
+  <noscript>This demo needs JavaScript and a local HTTP server.</noscript>
+  <script type="module">
+    // Track A owns this file. Room geometry and prop placement belong to Track B.
+    let THREE, RAPIER;
+    const CAR = Object.freeze({
+      len: .12, wid: .055, hgt: .025, mass: .15, colliderY: -.004,
+      wheelX: .032, wheelY: -.008, wheelZ: .042, wheelR: .014, wheelWidth: .01,
+      suspRest: .025, suspTravel: .012, stiffness: 250, compression: 15,
+      relaxation: 18, frictionSlip: 2.2, sideFriction: .6,
+      engineFwd: .35, engineRev: -.15, brake: .02,
+      maxSteer: .45, steerLerp: .25, maxSpeed: 1.2, maxReverseSpeed: .5,
+    });
+    const CAMERA = Object.freeze({ behind: .35, height: .10, lookAhead: .12, near: .005, far: 50, smoothing: 10 });
+    const STEP = 1 / 60;
+    const WHEELS = [
+      [-CAR.wheelX, CAR.wheelY, CAR.wheelZ], [CAR.wheelX, CAR.wheelY, CAR.wheelZ],
+      [-CAR.wheelX, CAR.wheelY, -CAR.wheelZ], [CAR.wheelX, CAR.wheelY, -CAR.wheelZ],
+    ];
+    const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+    const finiteVector = (a, n) => Array.isArray(a) && a.length === n && a.every(Number.isFinite);
+
+    function validateData(ROOM, SPAWN, PROPS) {
+      if (!Array.isArray(ROOM) || !ROOM.length) throw new Error('ROOM must be a nonempty array.');
+      if (!finiteVector(SPAWN?.pos, 3) || !Number.isFinite(SPAWN?.heading)) throw new Error('SPAWN needs a finite pos and heading.');
+      if (!Array.isArray(PROPS)) throw new Error('PROPS must be an array.');
+      for (const [entries, dynamic, label] of [[ROOM, false, 'ROOM'], [PROPS, true, 'PROPS']]) {
+        entries.forEach((e, i) => {
+          if (!e || !finiteVector(e.pos, 3) || !finiteVector(e.size, 3) || e.size.some(n => n <= 0) ||
+              (e.rot !== undefined && !finiteVector(e.rot, 3)) || typeof e.tag !== 'string' ||
+              !(typeof e.color === 'string' || (typeof e.color === 'number' && Number.isFinite(e.color))) ||
+              (dynamic && !(Number.isFinite(e.mass) && e.mass > 0))) {
+            throw new Error(`${label}[${i}] violates the room contract (centers, positive full extents, XYZ radians, color, tag${dynamic ? ', positive mass' : ''}).`);
+          }
+        });
+      }
+    }
+
+    function createCar(world, spawn) {
+      const body = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(...spawn.pos)
+        .setRotation({ x: 0, y: Math.sin(spawn.heading / 2), z: 0, w: Math.cos(spawn.heading / 2) })
+        .setLinearDamping(.08).setAngularDamping(1).setCcdEnabled(true));
+      world.createCollider(RAPIER.ColliderDesc.cuboid(CAR.wid / 2, CAR.hgt / 2, CAR.len / 2)
+        .setTranslation(0, CAR.colliderY, 0).setMass(CAR.mass).setFriction(.4).setRestitution(0), body);
+      const controller = world.createVehicleController(body);
+      controller.indexUpAxis = 1;
+      controller.setIndexForwardAxis = 2; // Rapier 0.14.0 setter property.
+      WHEELS.forEach(([x, y, z], i) => {
+        controller.addWheel({ x, y, z }, { x: 0, y: -1, z: 0 }, { x: -1, y: 0, z: 0 }, CAR.suspRest, CAR.wheelR);
+        controller.setWheelSuspensionStiffness(i, CAR.stiffness);
+        controller.setWheelSuspensionCompression(i, CAR.compression);
+        controller.setWheelSuspensionRelaxation(i, CAR.relaxation);
+        controller.setWheelMaxSuspensionTravel(i, CAR.suspTravel);
+        controller.setWheelFrictionSlip(i, CAR.frictionSlip);
+        controller.setWheelSideFrictionStiffness(i, CAR.sideFriction);
+      });
+      return { body, controller, steering: 0, upsideDown: 0 };
+    }
+
+    function forwardVector(q) {
+      return { x: 2 * (q.x * q.z + q.w * q.y), y: 2 * (q.y * q.z - q.w * q.x), z: 1 - 2 * (q.x * q.x + q.y * q.y) };
+    }
+    function forwardSpeed(car) {
+      const f = forwardVector(car.body.rotation()), v = car.body.linvel();
+      return f.x * v.x + f.y * v.y + f.z * v.z;
+    }
+    function stepVehicle(car, input) {
+      const { body, controller } = car;
+      if (input.throttle || input.steer || input.brake) body.wakeUp();
+      car.steering += (input.steer * CAR.maxSteer - car.steering) * CAR.steerLerp;
+      const speed = forwardSpeed(car);
+      const opposing = input.throttle && speed * input.throttle < -.05;
+      const braking = input.brake || opposing;
+      let force = 0;
+      if (!braking && input.throttle > 0) force = CAR.engineFwd * clamp(1 - Math.max(0, speed) / CAR.maxSpeed, 0, 1);
+      if (!braking && input.throttle < 0) force = CAR.engineRev * clamp(1 - Math.max(0, -speed) / CAR.maxReverseSpeed, 0, 1);
+      for (let i = 0; i < 4; i++) {
+        controller.setWheelSteering(i, i < 2 ? car.steering : 0);
+        controller.setWheelEngineForce(i, i >= 2 ? force : 0);
+        controller.setWheelBrake(i, braking ? CAR.brake : 0);
+      }
+      // Explicitly exclude the chassis from suspension rays.
+      controller.updateVehicle(STEP, undefined, undefined, collider => collider.parent()?.handle !== body.handle);
+    }
+    function resetCar(car, spawn) {
+      car.body.setTranslation({ x: spawn.pos[0], y: spawn.pos[1], z: spawn.pos[2] }, true);
+      car.body.setRotation({ x: 0, y: Math.sin(spawn.heading / 2), z: 0, w: Math.cos(spawn.heading / 2) }, true);
+      car.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      car.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      car.body.resetForces(true);
+      car.body.resetTorques(true);
+      car.steering = 0;
+      car.upsideDown = 0;
+      for (let i = 0; i < 4; i++) {
+        car.controller.setWheelSteering(i, 0);
+        car.controller.setWheelEngineForce(i, 0);
+        car.controller.setWheelBrake(i, 0);
+      }
+    }
+    function validBody(body) {
+      return [body.translation(), body.rotation(), body.linvel(), body.angvel()].every(v => Object.values(v).every(Number.isFinite));
+    }
+    function needsRecovery(car, bounds) {
+      const p = car.body.translation(), q = car.body.rotation();
+      car.upsideDown = 1 - 2 * (q.x * q.x + q.z * q.z) < 0 ? car.upsideDown + STEP : 0;
+      return p.y < -2 || p.x < bounds.min.x - 1 || p.x > bounds.max.x + 1 ||
+        p.z < bounds.min.z - 1 || p.z > bounds.max.z + 1 || car.upsideDown >= 1.5;
+    }
+
+    const overlay = document.querySelector('#overlay');
+    const statusTitle = document.querySelector('#status-title');
+    const detail = document.querySelector('#detail');
+    const actions = document.querySelector('#actions');
+    const resume = document.querySelector('#resume');
+    let failed = false;
+    function showError(error) {
+      failed = true;
+      console.error(error);
+      overlay.hidden = false;
+      statusTitle.textContent = 'The demo could not continue';
+      detail.textContent = `${error.message || error}\n\nServe this directory over HTTP. Check the selected room module and network connection, then reload.`;
+      actions.hidden = false;
+      resume.hidden = true;
+    }
+    document.querySelector('#reload').addEventListener('click', () => location.reload());
+    window.addEventListener('error', e => showError(e.error || new Error(e.message)));
+    window.addEventListener('unhandledrejection', e => showError(e.reason || new Error('Startup failed.')));
+
+    async function boot() {
+      if (location.protocol === 'file:') throw new Error('Start a local HTTP server: python3 -m http.server 8000');
+      const params = new URLSearchParams(location.search);
+      const fallback = params.has('fallback');
+      const modeLink = document.querySelector('#mode-link');
+      if (fallback) { modeLink.textContent = 'Full office'; modeLink.href = location.pathname; }
+      const modulePath = fallback ? './room.fallback.js' : './room.js';
+      let roomModule, propsModule;
+      try {
+        // Do not import live modules at all when fallback is selected.
+        roomModule = await import(modulePath);
+        propsModule = fallback ? { PROPS: [] } : await import('./props.js');
+      } catch (error) {
+        throw new Error(`Could not load ${modulePath}${fallback ? '' : ' or ./props.js'}. Track B must supply the data modules. ${error.message}`);
+      }
+      const { ROOM, SPAWN } = roomModule, { PROPS } = propsModule;
+      validateData(ROOM, SPAWN, PROPS);
+      detail.textContent = 'Loading renderer and physics…';
+      [THREE, { default: RAPIER }] = await Promise.all([
+        import('three'), import('https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.14.0/+esm'),
+      ]);
+      await RAPIER.init();
+      const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+      world.lengthUnit = .12;
+      world.timestep = STEP;
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color('#bec5cd');
+      const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, CAMERA.near, CAMERA.far);
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.domElement.tabIndex = 0;
+      renderer.domElement.setAttribute('aria-label', 'Office driving game. WASD or arrows to drive, Space to brake, R to recover.');
+      document.body.prepend(renderer.domElement);
+      renderer.domElement.addEventListener('webglcontextlost', e => { e.preventDefault(); showError(new Error('Graphics context lost. Reload to restart.')); });
+      scene.add(new THREE.AmbientLight(0xffffff, 1.8));
+      const sunlight = new THREE.DirectionalLight(0xfff0d8, 2.2);
+      sunlight.position.set(-4, 8, 3);
+      scene.add(sunlight);
+
+      const box = new THREE.BoxGeometry(1, 1, 1), materials = new Map();
+      function material(color) {
+        const key = new THREE.Color(color).getHex();
+        if (!materials.has(key)) materials.set(key, new THREE.MeshLambertMaterial({ color: key }));
+        return materials.get(key);
+      }
+      function transform(entry) {
+        return new THREE.Quaternion().setFromEuler(new THREE.Euler(...(entry.rot || [0, 0, 0]), 'XYZ'));
+      }
+      function collider(entry) {
+        return RAPIER.ColliderDesc.cuboid(...entry.size.map(n => n / 2)).setFriction(.7).setRestitution(0);
+      }
+      const groups = new Map(), roomBounds = new THREE.Box3(), floorBounds = new THREE.Box3();
+      const matrix = new THREE.Matrix4();
+      for (const entry of ROOM) {
+        const rotation = transform(entry);
+        world.createCollider(collider(entry).setTranslation(...entry.pos).setRotation(rotation));
+        const mat = material(entry.color);
+        if (!groups.has(mat)) groups.set(mat, []);
+        matrix.compose(new THREE.Vector3(...entry.pos), rotation, new THREE.Vector3(...entry.size));
+        groups.get(mat).push(matrix.clone());
+        const bounds = new THREE.Box3(new THREE.Vector3(-.5, -.5, -.5), new THREE.Vector3(.5, .5, .5)).applyMatrix4(matrix);
+        roomBounds.union(bounds);
+        if (entry.tag === 'carpet') floorBounds.union(bounds);
+      }
+      const obstacles = [];
+      for (const [mat, transforms] of groups) {
+        const mesh = new THREE.InstancedMesh(box, mat, transforms.length);
+        transforms.forEach((m, i) => mesh.setMatrixAt(i, m));
+        mesh.instanceMatrix.needsUpdate = true;
+        mesh.computeBoundingSphere();
+        scene.add(mesh);
+        obstacles.push(mesh);
+      }
+      const props = PROPS.map(entry => {
+        const body = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(...entry.pos)
+          .setRotation(transform(entry)).setCcdEnabled(true).setLinearDamping(.15).setAngularDamping(.4));
+        world.createCollider(collider(entry).setMass(entry.mass), body);
+        const mesh = new THREE.Mesh(box, material(entry.color));
+        mesh.scale.set(...entry.size);
+        scene.add(mesh);
+        obstacles.push(mesh);
+        return { body, mesh };
+      });
+      const car = createCar(world, SPAWN);
+      const carMesh = new THREE.Group();
+      scene.add(carMesh);
+      function carBox(size, pos, color) {
+        const mesh = new THREE.Mesh(box, material(color));
+        mesh.scale.set(...size); mesh.position.set(...pos); carMesh.add(mesh);
+      }
+      carBox([CAR.wid, CAR.hgt, CAR.len], [0, CAR.colliderY, 0], '#ffc45d');
+      carBox([.042, .014, .042], [0, .015, -.012], '#24364b');
+      carBox([.04, .004, .009], [0, .009, .052], '#fff3cc'); // Front marks +Z.
+      const wheelGeometry = new THREE.CylinderGeometry(CAR.wheelR, CAR.wheelR, CAR.wheelWidth, 12);
+      wheelGeometry.rotateZ(Math.PI / 2); // Cylinder axle is local X.
+      const wheelMeshes = WHEELS.map(() => {
+        const pivot = new THREE.Group();
+        const tire = new THREE.Mesh(wheelGeometry, material('#17191c'));
+        pivot.add(tire); carMesh.add(pivot);
+        return { pivot, tire };
+      });
+
+      const held = new Set(), drivingKeys = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyR']);
+      let resetRequested = false, paused = document.hidden || !document.hasFocus();
+      let accumulator = 0, lastTime = null, snapCamera = true;
+      function clearInput() { held.clear(); resetRequested = false; }
+      function setPaused(value) {
+        clearInput(); paused = value; accumulator = 0; lastTime = null;
+        if (failed) return;
+        overlay.hidden = !paused;
+        if (paused) {
+          statusTitle.textContent = 'Paused'; detail.textContent = 'Focus the game to resume. Driving keys have been released.';
+          actions.hidden = false; resume.hidden = false;
+        }
+      }
+      window.addEventListener('keydown', e => {
+        if (!drivingKeys.has(e.code) || e.target.closest?.('button, a, input, textarea')) return;
+        e.preventDefault();
+        if (paused || failed) return;
+        if (e.code === 'KeyR') { if (!e.repeat && !held.has(e.code)) resetRequested = true; }
+        held.add(e.code);
+      });
+      window.addEventListener('keyup', e => { if (drivingKeys.has(e.code)) { e.preventDefault(); held.delete(e.code); } });
+      window.addEventListener('blur', () => setPaused(true));
+      window.addEventListener('focus', () => setPaused(document.hidden));
+      document.addEventListener('visibilitychange', () => setPaused(document.hidden || !document.hasFocus()));
+      resume.addEventListener('click', () => { renderer.domElement.focus(); setPaused(false); });
+      renderer.domElement.addEventListener('pointerdown', () => { renderer.domElement.focus(); if (!document.hidden) setPaused(false); });
+      const down = (...codes) => codes.some(code => held.has(code));
+      function recover() { clearInput(); resetCar(car, SPAWN); snapCamera = true; }
+      function step() {
+        if (resetRequested) recover();
+        stepVehicle(car, {
+          throttle: Number(down('KeyW', 'ArrowUp')) - Number(down('KeyS', 'ArrowDown')),
+          steer: Number(down('KeyA', 'ArrowLeft')) - Number(down('KeyD', 'ArrowRight')),
+          brake: down('Space'),
+        });
+        world.step();
+        if (!validBody(car.body) || props.some(p => !validBody(p.body))) throw new Error('Physics became non-finite. Reload for a clean simulation.');
+        if (needsRecovery(car, floorBounds.isEmpty() ? roomBounds : floorBounds)) recover();
+      }
+      function syncMeshes() {
+        carMesh.position.copy(car.body.translation()); carMesh.quaternion.copy(car.body.rotation());
+        wheelMeshes.forEach(({ pivot, tire }, i) => {
+          const [x, y, z] = WHEELS[i];
+          pivot.position.set(x, y - (car.controller.wheelSuspensionLength(i) ?? CAR.suspRest), z);
+          pivot.rotation.y = car.controller.wheelSteering(i) || 0;
+          tire.rotation.x = -(car.controller.wheelRotation(i) || 0);
+        });
+        for (const { body, mesh } of props) { mesh.position.copy(body.translation()); mesh.quaternion.copy(body.rotation()); }
+      }
+      const forward = new THREE.Vector3(), anchor = new THREE.Vector3(), desired = new THREE.Vector3();
+      const viewTarget = new THREE.Vector3(), rayDirection = new THREE.Vector3(), raycaster = new THREE.Raycaster();
+      let lastHeading = SPAWN.heading;
+      function updateCamera(dt) {
+        forward.set(0, 0, 1).applyQuaternion(carMesh.quaternion);
+        if (Math.hypot(forward.x, forward.z) > .1) lastHeading = Math.atan2(forward.x, forward.z);
+        forward.set(Math.sin(lastHeading), 0, Math.cos(lastHeading));
+        anchor.copy(carMesh.position).add(new THREE.Vector3(0, .025, 0));
+        desired.copy(carMesh.position).addScaledVector(forward, -CAMERA.behind); desired.y += CAMERA.height;
+        viewTarget.copy(anchor).addScaledVector(forward, CAMERA.lookAhead);
+        if (snapCamera) camera.position.copy(desired);
+        else camera.position.lerp(desired, 1 - Math.exp(-CAMERA.smoothing * dt));
+        // Clip the actual smoothed chase segment against furniture, excluding the car.
+        rayDirection.subVectors(camera.position, anchor);
+        const distance = rayDirection.length();
+        if (distance > .001) {
+          raycaster.set(anchor, rayDirection.multiplyScalar(1 / distance)); raycaster.far = distance; raycaster.near = 0;
+          const hit = raycaster.intersectObjects(obstacles, false)[0];
+          if (hit) camera.position.copy(anchor).addScaledVector(rayDirection, Math.max(.01, hit.distance - .02));
+        }
+        camera.lookAt(viewTarget); snapCamera = false;
+      }
+      window.addEventListener('resize', () => {
+        camera.aspect = innerWidth / Math.max(1, innerHeight); camera.updateProjectionMatrix();
+        renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5)); renderer.setSize(innerWidth, innerHeight);
+      });
+      const meter = document.querySelector('#meter'), diagnostics = document.querySelector('#diagnostics');
+      const debug = params.has('debug'); diagnostics.hidden = !debug;
+      let sampleTime = 0, frames = 0;
+      world.step(); // Populate the query pipeline before the first suspension ray cast.
+      syncMeshes(); updateCamera(0);
+      setPaused(paused);
+      function frame(now) {
+        if (failed) return;
+        try {
+          const dt = lastTime === null ? 0 : Math.min((now - lastTime) / 1000, .1); lastTime = now;
+          if (!paused) {
+            accumulator += dt;
+            let steps = 0;
+            while (accumulator >= STEP && steps < 6) { step(); accumulator -= STEP; steps++; }
+            if (steps === 6) accumulator = 0;
+            syncMeshes(); updateCamera(dt);
+          }
+          renderer.render(scene, camera);
+          frames++; sampleTime += dt;
+          if (sampleTime >= .25) {
+            meter.textContent = `${Math.abs(forwardSpeed(car)).toFixed(2)} m/s${fallback ? ' · simple room' : ''}`;
+            if (debug) {
+              const p = car.body.translation();
+              diagnostics.textContent = `${Math.round(frames / sampleTime)} fps · ${renderer.info.render.calls} draws\n${renderer.info.render.triangles} triangles · ${ROOM.length} fixed · ${PROPS.length} props\nposition ${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)}\nwheel contacts ${WHEELS.map((_, i) => +car.controller.wheelIsInContact(i)).join(' ')}`;
+            }
+            frames = 0; sampleTime = 0;
+          }
+          requestAnimationFrame(frame);
+        } catch (error) { showError(error); }
+      }
+      requestAnimationFrame(frame);
+    }
+    boot().catch(showError);
+  </script>
+</body>
+</html>
