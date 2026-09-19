@@ -29,10 +29,18 @@ const add = (pos, size, color, tag, rot) => {
 };
 
 add([0, -0.05, 0], [W, 0.1, D], "#4a4d52", "carpet");
+// 500 mm tile grid (alternate rows + seams, layered 1/2 mm) and the spawn-aisle accent run, as in room.js
+for (let r = 0; r < D / 0.5; r += 2) add([0, -0.0495, -D / 2 + 0.25 + r * 0.5], [W, 0.101, 0.5], "#50545a", "carpet");
+for (let c = 1; c < W / 0.5; c++) add([-W / 2 + c * 0.5, -0.0485, 0], [0.02, 0.101, D], "#3a3d42", "carpet");
+add([0, -0.0475, 0], [W, 0.101, 0.5], "#8a8f5a", "carpet");
 add([0, CEIL / 2, -D / 2], [W, CEIL, 0.2], "#f0a860", "wall");
 add([0, CEIL / 2, D / 2], [W, CEIL, 0.2], "#f0f0ee", "wall");
 add([-W / 2, CEIL / 2, 0], [0.2, CEIL, D], "#f0f0ee", "wall");
 add([W / 2, CEIL / 2, 0], [0.2, CEIL, D], "#f0f0ee", "wall");
+add([0, CEIL + 0.05, 0], [W, 0.1, D], "#f4f4f2", "ceiling");
+// hero-wall cues: dark sign band and a whiteboard
+add([-0.5, 2.05, -D / 2 + 0.12], [4.4, 0.55, 0.04], "#1c1c1e", "wall");
+add([-4.6, 1.55, -D / 2 + 0.12], [2.4, 1.2, 0.04], "#f2f0ec", "wall");
 
 for (const side of [-1, 1]) {
   const z = BENCH_Z + side * 0.3;
