@@ -20,9 +20,6 @@
     .hud-tl { position: absolute; top: 20px; left: 20px; min-width: 214px; padding: 10px 18px 12px; }
     .hud-name { font-size: 15px; line-height: 1.1; letter-spacing: .18em; color: var(--yellow); text-shadow: var(--hud-shadow); }
     .subtitle { margin: 3px 0 0; font: 600 12px/1.2 system-ui, sans-serif; letter-spacing: 0; text-transform: none; color: #d9dde6; opacity: .85; }
-    .hud-speed-row { display: flex; align-items: baseline; gap: 7px; margin-top: 2px; }
-    #meter { font-size: 54px; line-height: 1.02; letter-spacing: .005em; font-variant-numeric: tabular-nums; text-shadow: var(--hud-shadow); }
-    .hud-unit { font-size: 13px; letter-spacing: .2em; opacity: .66; }
     .hud-race { display: flex; gap: 16px; margin-top: 6px; font-size: 19px; text-shadow: var(--hud-shadow); }
     .hud-race b { color: var(--lime); font-weight: 800; }
     .hud-race .warn { color: var(--coral); }
@@ -30,11 +27,21 @@
     .hud-center { position: absolute; left: 50%; top: 30%; transform: translate(-50%, -50%); font-size: clamp(72px, 13vw, 170px); line-height: 1; color: var(--yellow); text-shadow: 0 5px 0 rgba(8, 10, 20, .45), 0 0 28px rgba(6, 8, 18, .4); }
     .hud-center.go { color: var(--lime); }
     .hud-bc { position: absolute; left: 50%; bottom: 86px; transform: translateX(-50%); padding: 10px 22px; font-size: 21px; white-space: nowrap; text-shadow: var(--hud-shadow); }
-    .hud-bl { position: absolute; left: 20px; bottom: 20px; padding: 9px 16px; font-size: 14px; letter-spacing: .06em; display: flex; gap: 14px; flex-wrap: wrap; max-width: calc(100vw - 200px); }
+    .hud-bl { position: absolute; left: 20px; bottom: 20px; padding: 9px 16px; font-size: 14px; letter-spacing: .06em; display: flex; gap: 14px; flex-wrap: wrap; max-width: calc(100vw - 280px); }
+    /* Radial speedometer, ported from Chirag's hud.js/hud.css (origin/chirag). Reads scale km/h, not m/s. */
+    #speedo { position: absolute; right: 20px; bottom: 20px; width: 204px; height: 204px; }
+    #speedo canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .speedo-digits { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-62%); text-align: center; }
+    .speedo-digits b { display: block; font: 900 52px/.9 var(--hud-font); font-style: italic; letter-spacing: -.02em; font-variant-numeric: tabular-nums; text-shadow: 0 2px 0 rgba(8,10,20,.45), 0 10px 26px rgba(255,199,44,.3); }
+    .speedo-digits small { display: block; margin-top: 5px; font-size: 9px; letter-spacing: .24em; opacity: .62; }
+    .speedo-gear { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; font: 900 21px/1 var(--hud-font); font-style: italic; color: var(--ink); background: linear-gradient(180deg, #26345a, #16203a); box-shadow: 0 1px 0 rgba(255,246,230,.16) inset, 0 -2px 0 rgba(8,10,20,.35) inset, 0 12px 22px -10px rgba(6,8,18,.9); transition: background 200ms ease-out, box-shadow 200ms ease-out; }
+    .speedo-gear.reverse { background: linear-gradient(180deg, var(--yellow), #ff8a1f); color: #1a1205; }
+    .speedo-gear.brake { background: linear-gradient(180deg, var(--coral), #c8341c); box-shadow: 0 1px 0 rgba(255,255,255,.3) inset, 0 0 24px rgba(255,90,60,.6); }
+    .speedo-real { position: absolute; right: 10px; bottom: 22px; font-size: 11px; letter-spacing: .1em; opacity: .62; font-variant-numeric: tabular-nums; }
     .hud-bl .sound { display: inline-flex; align-items: center; gap: 6px; }
     #sound-glyph { color: var(--yellow); }
     #sound-glyph.off { color: var(--ink); opacity: .5; }
-    .hud-br { position: absolute; right: 20px; bottom: 20px; padding: 9px 16px; font-size: 14px; letter-spacing: .06em; pointer-events: auto; color: var(--ink); text-decoration: none; }
+    .hud-br { position: absolute; right: 20px; bottom: 236px; padding: 9px 16px; font-size: 14px; letter-spacing: .06em; pointer-events: auto; color: var(--ink); text-decoration: none; }
     .hud-results { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 22px 32px 18px; min-width: 340px; text-align: center; }
     .hud-results h2 { margin: 0; font-size: 46px; line-height: 1; color: var(--yellow); text-shadow: var(--hud-shadow); }
     .hud-results .time { margin-top: 6px; font-size: 22px; letter-spacing: .12em; }
@@ -58,7 +65,7 @@
     #actions[hidden] { display: none; }
     #diagnostics { position: fixed; top: 115px; left: 24px; white-space: pre; font: 12px monospace; pointer-events: none; }
     .strip-label { position: fixed; font: 12px monospace; color: #fff; background: #0009; padding: 2px 6px; pointer-events: none; }
-    @media (max-width: 760px) { .hud-tl, .hud-bl { left: 12px; } #minimap, .hud-br { right: 12px; } #minimap { width: 160px; height: 132px; } .hud-bl { bottom: 62px; max-width: calc(100vw - 24px); } .hud-bc { bottom: 128px; font-size: 17px; } .panel { padding: 10px 12px; } }
+    @media (max-width: 760px) { .hud-tl, .hud-bl { left: 12px; } #minimap, .hud-br, #speedo { right: 12px; } #minimap { width: 160px; height: 132px; } #speedo { width: 148px; height: 148px; } .hud-br { bottom: 172px; } .speedo-digits b { font-size: 38px; } .speedo-gear { width: 30px; height: 30px; font-size: 17px; bottom: 14px; } .hud-bl { bottom: 176px; max-width: calc(100vw - 24px); } .hud-bc { bottom: 242px; font-size: 17px; } .panel { padding: 10px 12px; } }
   </style>
   <script type="importmap">
     { "imports": {
@@ -72,7 +79,6 @@
     <div class="hud-panel hud-tl">
       <div class="hud-name">Snap the Room</div>
       <p class="subtitle">A little car. A familiar office.</p>
-      <div class="hud-speed-row"><span id="meter">0.00</span><span class="hud-unit">m/s</span></div>
       <div class="hud-race" id="race-status" hidden><span>Lap <b id="hud-lap">1/3</b></span><span>Pos <b id="hud-pos">4/4</b></span><span id="hud-time">0:00.0</span></div>
     </div>
     <canvas id="minimap" class="hud-panel" width="448" height="368" hidden aria-label="Minimap"></canvas>
@@ -80,6 +86,12 @@
     <div class="hud-panel hud-bc" id="title-strip" hidden><kbd>Enter</kbd> race · 3 laps vs 3 rivals</div>
     <div class="hud-panel hud-bl" id="controls"><span><kbd>WASD / arrows</kbd> drive</span><span><kbd>Space</kbd> brake</span><span><kbd>Shift</kbd> handbrake</span><span><kbd>R</kbd> recover</span><span id="race-keys" hidden><kbd>Enter</kbd> race · <kbd>F</kbd> free drive</span><span class="sound"><kbd>M</kbd><svg id="sound-glyph" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M4 9.2h4L13 5v14l-5-4.2H4z" fill="currentColor"/><g id="sound-waves"><path d="M16 9.2a4 4 0 0 1 0 5.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18.7 6.6a7.6 7.6 0 0 1 0 10.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></g><g id="sound-slash" hidden><path d="M16.5 8.5l6 7M22.5 8.5l-6 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></g></svg><span id="sound-label">sound</span></span></div>
     <a class="hud-panel hud-br" id="mode-link" href="?fallback=1">Simple room</a>
+    <div id="speedo" aria-hidden="true">
+      <canvas id="speedo-dial"></canvas>
+      <div class="speedo-digits"><b id="speedo-kmh">0</b><small>km/h · 1:36 scale</small></div>
+      <div class="speedo-gear" id="speedo-gear">N</div>
+      <div class="speedo-real"><span id="meter">0.00</span> m/s</div>
+    </div>
     <div class="hud-panel hud-results" id="results" hidden role="status"><h2 id="results-title">Finished</h2><div class="time" id="results-time"></div><ol id="results-list"></ol><div class="hint"><kbd>Enter</kbd> race again · <kbd>F</kbd> free drive</div></div>
   </div>
   <div id="overlay"><section class="panel" id="message" role="status" aria-live="polite">
@@ -103,6 +115,7 @@
     // the host: it wires them to the car and the scene and owns no signal-processing or particle code itself.
     import { createAudio } from './audio.js';
     import { createEffects } from './fx.js';
+    import { createSpeedo } from './speedo.js';
     import { loadMap } from './maps.js';
     let THREE, RAPIER;
     // Chase camera, adapted from Joyride's camera.js (see the attribution in car.js) and scaled from its 4.6 m
@@ -545,6 +558,11 @@
         results: document.querySelector('#results'), resultsTitle: document.querySelector('#results-title'), resultsTime: document.querySelector('#results-time'), resultsList: document.querySelector('#results-list'),
         minimap: document.querySelector('#minimap'), last: {},
       };
+      // Radial dial in the bottom-right corner; it owns the m/s readout now, so #meter is written here only.
+      const speedo = createSpeedo({
+        canvas: document.querySelector('#speedo-dial'), kmhEl: document.querySelector('#speedo-kmh'),
+        msEl: document.querySelector('#meter'), gearEl: document.querySelector('#speedo-gear'),
+      });
       if (RACE) { hud.title.hidden = false; hud.keys.hidden = false; hud.minimap.hidden = false; }
       const fmtTime = t => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
       function startRace() {
@@ -695,7 +713,8 @@
         mm.fillStyle = 'rgba(255,246,230,.7)'; mm.font = '700 14px "Avenir Next Condensed", "Arial Narrow", Arial, sans-serif'; mm.textBaseline = 'top'; mm.fillText('N', 8, 6);
       }
       function set(key, el, value) { if (hud.last[key] !== value) { el.textContent = value; hud.last[key] = value; } }
-      function updateHud() {
+      function updateHud(dt = 0) {
+        speedo.update({ speed: forwardSpeed(car), throttle: Number(down('KeyW', 'ArrowUp')) - Number(down('KeyS', 'ArrowDown')), brake: down('Space'), dt });
         drawMinimap();
         if (!race) return;
         const me = race.cars[0];
@@ -850,7 +869,7 @@
         camera.aspect = innerWidth / Math.max(1, innerHeight); camera.updateProjectionMatrix();
         renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5)); renderer.setSize(innerWidth, innerHeight);
       });
-      const meter = document.querySelector('#meter'), diagnostics = document.querySelector('#diagnostics');
+      const diagnostics = document.querySelector('#diagnostics');
       const debug = params.has('debug'); // The panel stays hidden until its first sample so it never renders as an empty box.
       let sampleTime = 0, frames = 0, stepHist = [0, 0, 0, 0, 0, 0, 0], stepMs = 0, stepCount = 0;
       world.step(); // Populate the query pipeline before the first suspension ray cast.
@@ -910,7 +929,7 @@
             if (steps) { stepMs += performance.now() - t0; stepCount += steps; }
             stepHist[steps]++;
             if (steps === 6) accumulator = 0;
-            syncMeshes(accumulator / STEP); updateCamera(dt); updateHud(); audio.update(car); effects.update(dt);
+            syncMeshes(accumulator / STEP); updateCamera(dt); updateHud(dt); audio.update(car); effects.update(dt);
           }
           if (menu?.isOpen()) {
             // Cinematic: a slow, low sweep behind the parked car looking east into the office. The chase
@@ -925,7 +944,6 @@
           renderer.render(scene, camera);
           frames++; sampleTime += dt;
           if (sampleTime >= .25) {
-            meter.textContent = Math.abs(forwardSpeed(car)).toFixed(2);
             if (debug) {
               diagnostics.hidden = false;
               const p = car.body.translation();
