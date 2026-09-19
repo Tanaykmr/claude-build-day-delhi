@@ -1,0 +1,12 @@
+{
+  "name": "snap-the-room",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check-drive": "node check-drive.mjs",
+    "check-room": "node check-room.mjs"
+  },
+  "devDependencies": {
+    "@dimforge/rapier3d-compat": "0.14.0"
+  }
+}
