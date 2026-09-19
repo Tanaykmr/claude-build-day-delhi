@@ -16,17 +16,25 @@ const carArg = argv.indexOf('--car');
 if (carArg >= 0) globalThis.CAR_OVERRIDE = JSON.parse(argv[carArg + 1]);
 const {
   CAR, STEP, createWorld, createCar, roomColliderDesc, stepVehicle, resetCar, forwardSpeed,
-  heading, upVector, wheelContacts, validBody, needsRecovery,
+  heading, upVector, wheelContacts, validBody, needsRecovery, headingQuaternion,
+  rampGeometry, demoPhases, createDriver, carState,
 } = await import('./car.js');
 
 const args = new Set(argv);
 const verbose = args.has('--verbose');
 const rooms = args.has('--live') ? ['./room.js'] : args.has('--fallback') ? ['./room.fallback.js'] : ['./room.js', './room.fallback.js'];
+const wrap0 = a => Math.atan2(Math.sin(a), Math.cos(a));
 const f3 = n => (Math.round(n * 1000) / 1000).toFixed(3);
 const results = [];
 
-function buildWorld(ROOM) {
+function buildWorld(ROOM, PROPS = []) {
   const world = createWorld(RAPIER);
+  const props = PROPS.map(entry => {
+    const body = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(...entry.pos)
+      .setCcdEnabled(true).setLinearDamping(.15).setAngularDamping(.4));
+    world.createCollider(RAPIER.ColliderDesc.cuboid(...entry.size.map(n => n / 2)).setFriction(.7).setRestitution(0).setMass(entry.mass), body);
+    return body;
+  });
   const bounds = { min: { x: Infinity, z: Infinity }, max: { x: -Infinity, z: -Infinity } };
   for (const entry of ROOM) {
     world.createCollider(roomColliderDesc(RAPIER, entry));
@@ -36,7 +44,7 @@ function buildWorld(ROOM) {
     bounds.min.z = Math.min(bounds.min.z, entry.pos[2] - entry.size[2] / 2);
     bounds.max.z = Math.max(bounds.max.z, entry.pos[2] + entry.size[2] / 2);
   }
-  return { world, bounds };
+  return { world, bounds, props };
 }
 
 function snapshot(car) {
@@ -82,9 +90,12 @@ async function testRoom(path) {
   console.log(`\n=== ${path} ===`);
   const mod = await import(path);
   const { ROOM, SPAWN } = mod;
-  const { world, bounds } = buildWorld(ROOM);
+  const live = path === './room.js';
+  const { PROPS } = live ? await import('./props.js') : { PROPS: [] };
+  const { world, bounds, props } = buildWorld(ROOM, PROPS);
   const car = createCar(RAPIER, world, SPAWN);
   const ctx = { world, car, bounds, time: 0 };
+  console.log(`    ${ROOM.length} fixed boxes, ${PROPS.length} dynamic props`);
   world.step(); // populate the query pipeline before the first suspension ray cast (as index.html does)
   const floorY = 0;
   const restY = (a, b) => a.y > floorY + CAR.wheelR - CAR.wheelY + .002 && a.y < b; // chassis clearly above wheels' contact
@@ -126,6 +137,17 @@ async function testRoom(path) {
   const e = r.last;
   report('e. reverse', !r.failure && minFwd <= -.3 && e.x < SPAWN.pos[0] - .2 && r.minUp > .95, r.failure || `${fmt(e)} peak reverse ${f3(-minFwd)} m/s`);
   drive(ctx, 1, BRAKE);
+
+  // (e2) recovery: reset from a moving, rotated state must restore pos + heading and zero velocity
+  drive(ctx, 1, () => ({ throttle: 1, steer: -1, brake: false }));
+  resetCar(car, SPAWN);
+  const rq = car.body.rotation(), rp = car.body.translation(), rv = car.body.linvel(), rw = car.body.angvel(), want = headingQuaternion(SPAWN.heading);
+  const posOk = Math.hypot(rp.x - SPAWN.pos[0], rp.y - SPAWN.pos[1], rp.z - SPAWN.pos[2]) < 1e-6;
+  const rotOk = Math.abs(rq.x - want.x) + Math.abs(rq.y - want.y) + Math.abs(rq.z - want.z) + Math.abs(rq.w - want.w) < 1e-6;
+  const stillOk = Math.hypot(rv.x, rv.y, rv.z) === 0 && Math.hypot(rw.x, rw.y, rw.z) === 0 && car.steering === 0;
+  r = drive(ctx, 1, IDLE);
+  report('e2. resetCar restores spawn pose and zero velocity', posOk && rotOk && stillOk && !r.failure && r.last.contacts.every(Boolean) && Math.abs(wrap0(r.last.heading - SPAWN.heading)) < 1e-3,
+    `pos ${posOk} rot ${rotOk} still ${stillOk}; settled at ${fmt(r.last)}`);
 
   // (f) ramp ascent
   const ramp = ROOM.find(en => en.tag === 'ramp');
@@ -215,8 +237,27 @@ async function testRoom(path) {
       if (r.failure || !r.reached) { routeFailure = r.failure || `did not finish "${label}" in ${seconds} s at ${fmt(r.last)}`; break; }
     }
     report('j. route from SPAWN to the desktop', !routeFailure, routeFailure || routeNote.join(' → '));
+
+    // (k) the rehearsed two-minute demo route, driven by the same closed-loop driver index.html uses for ?demo=1
+    resetCar(car, SPAWN); drive(ctx, 1, IDLE);
+    const geo = rampGeometry(ROOM, mod);
+    const driver = createDriver(demoPhases(geo, SPAWN));
+    let demoFailure = null, maxY = 0, label = driver.label, log = [];
+    r = drive(ctx, 150, s => { const input = driver.input(carState(car)); if (driver.label !== label) { log.push(`${label} ✓ t=${f3(s.t)} (${f3(s.x)}, ${f3(s.z)})`); label = driver.label; } return input; }, {
+      until: () => driver.done,
+      watch: s => {
+        maxY = Math.max(maxY, s.y);
+        if (s.up < .7) return `tipped during "${driver.label}" at ${fmt(s)}`;
+        if (driver.timedOut) return `stuck in "${driver.label}" at ${fmt(s)}`;
+        if (props.some(b => !validBody(b))) return 'a prop became non-finite';
+      },
+    });
+    demoFailure = r.failure || (!r.reached ? `route incomplete, in "${driver.label}" at ${fmt(r.last)}` : null);
+    const moved = props.filter((b, i) => Math.hypot(b.translation().x - PROPS[i].pos[0], b.translation().z - PROPS[i].pos[2]) > .05).length;
+    report('k. full demo route (aisle, ramp, desk, descent, cups)', !demoFailure, demoFailure || `${f3(r.last.t)} s total, ${moved}/${PROPS.length} props knocked, ended at ${fmt(r.last)}`);
+    if (verbose || demoFailure) log.forEach(l => console.log('    ', l));
   } else {
-    for (const name of ['g. descend ramp to floor (reverse)', 'h. turning circle fits the desk lane', 'i. descend ramp nose-first', 'j. route from SPAWN to the desktop']) report(name, false, 'skipped: ascent failed');
+    for (const name of ['g. descend ramp to floor (reverse)', 'h. turning circle fits the desk lane', 'i. descend ramp nose-first', 'j. route from SPAWN to the desktop', 'k. full demo route (aisle, ramp, desk, descent, cups)']) report(name, false, 'skipped: ascent failed');
   }
 }
 

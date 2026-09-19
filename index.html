@@ -59,7 +59,7 @@
     // Vehicle constants and physics live in car.js, shared with check-drive.mjs (headless test).
     import {
       CAR, STEP, WHEELS, ROOM_FRICTION, createWorld, createCar, roomColliderDesc, stepVehicle, resetCar,
-      forwardSpeed, validBody, needsRecovery, eulerToQuaternion,
+      forwardSpeed, validBody, needsRecovery, eulerToQuaternion, rampGeometry, demoPhases, createDriver, carState,
     } from './car.js';
     let THREE, RAPIER;
     const CAMERA = Object.freeze({ behind: .35, height: .10, lookAhead: .12, near: .005, far: 50, smoothing: 10 });
@@ -295,7 +295,13 @@
         segment.codes.forEach(code => scripted.add(code));
         scriptStep++;
       }
-      let resetRequested = false, paused = script.length ? false : document.hidden || !document.hasFocus();
+      // ?demo=1 replays the rehearsed route with the closed-loop driver from car.js (also run by check-drive.mjs).
+      // Any driving key hands control back to the keyboard.
+      const geometry = rampGeometry(ROOM, roomModule);
+      let demo = params.has('demo') && geometry ? createDriver(demoPhases(geometry, SPAWN)) : null;
+      const subtitle = document.querySelector('.subtitle');
+      if (demo) subtitle.textContent = 'Demo route playing · press any driving key to take over';
+      let resetRequested = false, paused = (script.length || demo) ? false : document.hidden || !document.hasFocus();
       let accumulator = 0, lastTime = null, snapCamera = true;
       function clearInput() { held.clear(); resetRequested = false; }
       function setPaused(value) {
@@ -311,6 +317,7 @@
         if (!drivingKeys.has(e.code) || e.target.closest?.('button, a, input, textarea')) return;
         e.preventDefault();
         if (paused || failed) return;
+        if (demo) { demo = null; subtitle.textContent = 'A little car. A familiar office.'; }
         if (e.code === 'KeyR') { if (!e.repeat && !held.has(e.code)) resetRequested = true; }
         held.add(e.code);
       });
@@ -325,7 +332,8 @@
       function step() {
         advanceScript();
         if (resetRequested) recover();
-        stepVehicle(car, {
+        if (demo && demo.done) { demo = null; subtitle.textContent = 'A little car. A familiar office.'; }
+        stepVehicle(car, demo ? demo.input(carState(car)) : {
           throttle: Number(down('KeyW', 'ArrowUp')) - Number(down('KeyS', 'ArrowDown')),
           steer: Number(down('KeyA', 'ArrowLeft')) - Number(down('KeyD', 'ArrowRight')),
           brake: down('Space'),

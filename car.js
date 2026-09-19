@@ -103,6 +103,7 @@ export function forwardSpeed(car) {
 // input: { throttle: -1..1, steer: -1..1 (+ = left), brake: boolean }
 export function stepVehicle(car, input) {
   const { body, controller } = car;
+  input = { throttle: Number.isFinite(input.throttle) ? input.throttle : 0, steer: Number.isFinite(input.steer) ? input.steer : 0, brake: !!input.brake };
   if (input.throttle || input.steer || input.brake) body.wakeUp();
   car.steering += (input.steer * CAR.maxSteer - car.steering) * CAR.steerLerp;
   const speed = forwardSpeed(car);
@@ -153,4 +154,82 @@ export function needsRecovery(car, bounds) {
 
 export function wheelContacts(car) {
   return WHEELS.map((_, i) => +car.controller.wheelIsInContact(i));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Scripted demo driver: a small closed-loop "driver" that follows the rehearsed two-minute route.
+// Shared by index.html (?demo=1) and check-drive.mjs so the rehearsal is exactly what gets tested.
+export const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+export function carState(car) {
+  const p = car.body.translation(), q = car.body.rotation();
+  return { x: p.x, y: p.y, z: p.z, heading: heading(q), fwd: forwardSpeed(car), up: upVector(q).y };
+}
+// Ramp/desk geometry from a room module (RAMP export) or, failing that, from the ramp entry itself.
+export function rampGeometry(ROOM, mod = {}) {
+  const ramp = ROOM.find(e => e.tag === 'ramp');
+  if (!ramp) return null;
+  const half = Math.cos(ramp.rot?.[2] ?? 0) * ramp.size[0] / 2;
+  return {
+    footX: mod.RAMP?.p0?.[0] ?? ramp.pos[0] - half,
+    crestX: mod.RAMP?.p1?.[0] ?? ramp.pos[0] + half,
+    rampZ: ramp.pos[2],
+    deskTop: mod.RAMP?.p1?.[1] ?? .75,
+    gapX: mod.ROUTE?.dividerGap?.[0] ?? (mod.RAMP?.p1?.[0] ?? ramp.pos[0] + half) + .6 + 3 * 1.2,
+    cups: mod.ROUTE?.cups ? [mod.ROUTE.cups[0], mod.ROUTE.cups[2]] : [-6.1, 1.5],
+  };
+}
+// Steer to hold `target` heading while pulling onto the line through `line` (a point) perpendicular to travel.
+// Stanley-style: aim at the target heading plus a bounded correction toward the line (max ~50°).
+export function steerTo(s, target, line, gain = 3, lateralGain = 4) {
+  let desired = target;
+  if (line) {
+    const left = { x: Math.cos(target), z: -Math.sin(target) }; // up × forward of the target heading
+    const offset = ((line.x ?? s.x) - s.x) * left.x + ((line.z ?? s.z) - s.z) * left.z; // + means the line is to the left
+    desired += clamp(Math.atan(lateralGain * offset), -.9, .9);
+  }
+  return clamp(gain * wrap(desired - s.heading), -1, 1);
+}
+export const creep = (s, vmax = .5) => (s.fwd > vmax ? 0 : 1);
+const E = Math.PI / 2, W = -Math.PI / 2, N = Math.PI, S = 0; // headings: +X, -X, -Z, +Z
+
+export function demoPhases(g, spawn) {
+  const lane = { x: 0, z: g.rampZ - .17 }; // outer half of the desk lane, so the wheels clip the cups on the edge
+  const rampLine = { x: 0, z: g.rampZ };
+  const westX = spawn.pos[0] - .35; // turning column between the spawn and the west wall
+  return [
+    { label: 'east along the aisle', until: s => s.x > 2.6, input: s => ({ throttle: 1, steer: steerTo(s, E, { x: 0, z: spawn.pos[2] }) }) },
+    { label: 'U-turn at the east end', until: s => Math.abs(wrap(s.heading - W)) < .12, input: s => ({ throttle: creep(s), steer: 1 }) },
+    { label: 'west along the aisle', until: s => s.x < westX + .4, input: s => ({ throttle: s.x < westX + 1.2 ? creep(s, .6) : 1, steer: steerTo(s, W, { x: 0, z: spawn.pos[2] }) }) },
+    { label: 'turn north toward the ramp line', until: s => Math.abs(wrap(s.heading - N)) < .1, input: s => ({ throttle: creep(s), steer: -1 }) },
+    { label: 'run north to the ramp line', until: s => s.z < g.rampZ + .22, input: s => ({ throttle: creep(s), steer: steerTo(s, N, { x: westX, z: 0 }) }) },
+    { label: 'turn east onto the ramp line', until: s => Math.abs(wrap(s.heading - E)) < .1, input: s => ({ throttle: creep(s), steer: -1 }) },
+    { label: 'climb the ramp', until: s => s.x > g.crestX + .3 && s.y > g.deskTop, input: s => ({ throttle: 1, steer: steerTo(s, E, { x: 0, z: g.rampZ }) }) },
+    { label: 'along the desk lane through the cups', until: s => s.x > g.gapX - .4, input: s => ({ throttle: s.x > g.gapX - 1.2 ? creep(s, .6) : 1, steer: steerTo(s, E, { x: 0, z: lane.z }) }) },
+    { label: 'U-turn through the divider gap', until: s => Math.abs(wrap(s.heading - W)) < .12, input: s => ({ throttle: creep(s, .45), steer: -1 }) },
+    { label: 'back west along the lane', until: s => s.x < g.crestX + .5, input: s => ({ throttle: s.x < g.gapX - .9 ? 1 : creep(s, .45), steer: steerTo(s, W, { x: 0, z: g.rampZ }, 3, 5) }) },
+    { label: 'descend the ramp', until: s => s.x < g.footX - .35 && s.y < .06, input: s => ({ throttle: 1, steer: steerTo(s, W, rampLine) }) },
+    { label: 'turn south toward the cups', until: s => Math.abs(wrap(s.heading - S)) < .12, input: s => ({ throttle: creep(s), steer: 1 }) },
+    { label: 'plow through the cups', until: s => s.z > g.cups[1] + .7, input: s => ({ throttle: 1, steer: steerTo(s, S, { x: g.cups[0] - .05, z: 0 }) }) },
+    { label: 'turn back north', until: s => Math.abs(wrap(s.heading - N)) < .12, input: s => ({ throttle: creep(s), steer: -1 }) },
+    { label: 'second pass through the cups', until: s => s.z < g.cups[1] - .7, input: s => ({ throttle: 1, steer: steerTo(s, N, { x: g.cups[0] + .2, z: 0 }) }) },
+    { label: 'turn back south', until: s => Math.abs(wrap(s.heading - S)) < .12, input: s => ({ throttle: creep(s), steer: -1 }) },
+    { label: 'third pass through the cups', until: s => s.z > g.cups[1] + .5, input: s => ({ throttle: 1, steer: steerTo(s, S, { x: g.cups[0] - .25, z: 0 }) }) },
+    { label: 'stop', until: s => Math.abs(s.fwd) < .02, input: () => ({ throttle: 0, steer: 0, brake: true }) },
+  ];
+}
+
+export function createDriver(phases, timeout = 20) {
+  let index = 0, elapsed = 0;
+  return {
+    get done() { return index >= phases.length; },
+    get label() { return phases[index]?.label ?? 'done'; },
+    get timedOut() { return elapsed > timeout; },
+    input(s) {
+      while (index < phases.length && phases[index].until(s)) { index++; elapsed = 0; }
+      if (index >= phases.length) return { throttle: 0, steer: 0, brake: true };
+      elapsed += STEP;
+      const { throttle = 0, steer = 0, brake = false } = phases[index].input(s);
+      return { throttle, steer, brake };
+    },
+  };
 }
