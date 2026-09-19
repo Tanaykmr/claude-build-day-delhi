@@ -85,35 +85,74 @@ const topUnder = (x, z, belowY, footHalf = 0.0) => {
 }
 
 // ---------- ramp ----------
-const ramps = ROOM.filter((e) => e.tag === "ramp");
-if (ramps.length !== 1) fail(`expected exactly one ramp, found ${ramps.length}`);
-for (const r of ramps) {
+// The ramp may be several "ramp"-tagged plates: the MAIN slope (longest) plus optional foot/crest fillets.
+const topFace = (r) => {
   const th = r.rot?.[2] || 0, L = r.size[0], t = r.size[1];
   const c = Math.cos(th), s = Math.sin(th);
-  // top face center = center + normal*t/2 where normal = (-sinθ, cosθ)
-  const cx = r.pos[0] - s * t / 2, cy = r.pos[1] + c * t / 2;
-  const p0 = [cx - c * L / 2, cy - s * L / 2], p1 = [cx + c * L / 2, cy + s * L / 2];
-  const deg = th * 180 / Math.PI;
-  console.log(`      ramp top face: (${p0[0].toFixed(3)}, ${p0[1].toFixed(3)}) → (${p1[0].toFixed(3)}, ${p1[1].toFixed(3)})  θ=${deg.toFixed(1)}°  run ${(L * c).toFixed(2)} m  width ${r.size[2]} m  z=${r.pos[2]}`);
-  if (Math.abs(p0[1]) > 0.002) fail(`ramp foot y=${p0[1].toFixed(4)}, want 0`);
-  if (Math.abs(p1[1] - 0.75) > 0.002) fail(`ramp crest y=${p1[1].toFixed(4)}, want 0.75`);
+  const cx = r.pos[0] - s * t / 2, cy = r.pos[1] + c * t / 2; // top face center = center + normal*t/2, normal = (-sinθ, cosθ)
+  return { th, lo: [cx - c * L / 2, cy - s * L / 2], hi: [cx + c * L / 2, cy + s * L / 2], deg: th * 180 / Math.PI, run: L * c };
+};
+const ramps = ROOM.filter((e) => e.tag === "ramp");
+const rampSet = new Set(ramps);
+if (ramps.length < 1 || ramps.length > 3) fail(`expected 1 main ramp plus up to 2 fillets, found ${ramps.length} ramp plates`);
+const main = ramps.slice().sort((a, b) => b.size[0] - a.size[0])[0];
+const fillets = ramps.filter((r) => r !== main);
+if (main) {
+  const r = main;
+  const { lo: p0, hi: p1, deg, run } = topFace(r);
+  console.log(`      ramp top face: (${p0[0].toFixed(3)}, ${p0[1].toFixed(3)}) → (${p1[0].toFixed(3)}, ${p1[1].toFixed(3)})  θ=${deg.toFixed(2)}°  run ${run.toFixed(2)} m  width ${r.size[2]} m  z=${r.pos[2].toFixed(2)}  fillets ${fillets.length}`);
+  if (Math.abs(p0[1]) > 0.001) fail(`ramp foot y=${p0[1].toFixed(4)}, want 0 (±1 mm)`);
   if (deg > 18.5 || deg < 12) warn(`ramp incline ${deg.toFixed(1)}° outside 12–18.5°`);
-  // crest must meet a desktop edge: find desktop whose x-min ≈ p1.x and z-range contains ramp z range
-  const desk = ROOM.find((e) => e.tag === "desktop" && Math.abs(e.pos[0] - e.size[0] / 2 - p1[0]) < 0.01 && r.pos[2] - r.size[2] / 2 >= e.pos[2] - e.size[2] / 2 - 1e-6 && r.pos[2] + r.size[2] / 2 <= e.pos[2] + e.size[2] / 2 + 1e-6);
-  if (!desk) fail("ramp crest does not meet a desktop west edge inside its lane");
-  else ok(`ramp crest meets desktop at x=${p1[0].toFixed(2)}, lane z ${(desk.pos[2] - desk.size[2] / 2).toFixed(2)}..${(desk.pos[2] + desk.size[2] / 2).toFixed(2)}`);
-  // approach: nothing between the west wall and the ramp foot in the ramp's z strip, low
-  const approach = { min: [-W / 2 + 0.1, 0.0005, r.pos[2] - r.size[2] / 2], max: [p0[0], 0.3, r.pos[2] + r.size[2] / 2] };
-  const blockers = solids.filter(({ e, bb }) => e.tag !== "carpet" && e !== r && overlaps(approach, bb));
+  // crest must meet a desktop west edge: same x within 1 mm, ramp top ≤ desktop top within 1 mm, inside its lane
+  const desk = ROOM.find((e) => e.tag === "desktop" && Math.abs(e.pos[0] - e.size[0] / 2 - p1[0]) < 0.001 && r.pos[2] - r.size[2] / 2 >= e.pos[2] - e.size[2] / 2 - 1e-6 && r.pos[2] + r.size[2] / 2 <= e.pos[2] + e.size[2] / 2 + 1e-6);
+  if (!desk) fail(`ramp crest x=${p1[0].toFixed(3)} does not meet a desktop west edge inside its lane`);
+  else {
+    const deskTop = desk.pos[1] + desk.size[1] / 2;
+    const lip = p1[1] - deskTop;
+    if (lip > 0.001) fail(`ramp crest sticks ${(lip * 1000).toFixed(2)} mm ABOVE the desktop (lip)`);
+    else if (lip < -0.001) fail(`ramp crest is ${(-lip * 1000).toFixed(2)} mm BELOW the desktop top (step)`);
+    else ok(`ramp crest meets desktop at x=${p1[0].toFixed(3)}: ramp top ${p1[1].toFixed(4)} vs desk top ${deskTop.toFixed(4)} (Δ ${(lip * 1000).toFixed(2)} mm), lane z ${(desk.pos[2] - desk.size[2] / 2).toFixed(2)}..${(desk.pos[2] + desk.size[2] / 2).toFixed(2)}`);
+  }
+  // profile of the driving surface along x at the ramp's z (used to validate fillets)
+  const profile = (x) => (x <= p0[0] ? 0 : x >= p1[0] ? p1[1] : p0[1] + (x - p0[0]) * Math.tan(r.rot?.[2] || 0));
+  let footX = p0[0];
+  for (const f of fillets) {
+    const { lo, hi, deg: fdeg } = topFace(f);
+    const where = hi[0] <= p0[0] + 0.5 ? "foot" : "crest";
+    const startGap = lo[1] - profile(lo[0]);
+    const endGap = hi[1] - profile(hi[0]);
+    const maxY = Math.max(lo[1], hi[1]);
+    if (Math.abs(startGap) > 0.001) fail(`${where} fillet low end is ${(startGap * 1000).toFixed(2)} mm off the surface at x=${lo[0].toFixed(3)} (lip)`);
+    if (endGap > 0.001) fail(`${where} fillet high end sticks ${(endGap * 1000).toFixed(2)} mm above the surface at x=${hi[0].toFixed(3)} (lip)`);
+    if (maxY > 0.75 + 1e-4) fail(`${where} fillet rises to y=${maxY.toFixed(4)} > 0.75`);
+    if (fdeg > deg + 0.01) fail(`${where} fillet is steeper (${fdeg.toFixed(1)}°) than the ramp (${deg.toFixed(1)}°)`);
+    if (f.size[2] > r.size[2] + 1e-6 || Math.abs(f.pos[2] - r.pos[2]) > 1e-6) fail(`${where} fillet is not inside the ramp's z strip`);
+    if (!fails) ok(`${where} fillet ${fdeg.toFixed(1)}° from (${lo[0].toFixed(3)}, ${lo[1].toFixed(3)}) to (${hi[0].toFixed(3)}, ${hi[1].toFixed(3)}): flush start, no lip, top ≤ 0.75`);
+    if (where === "foot") footX = Math.min(footX, lo[0]);
+  }
+  // approach: nothing between the west wall and the first ramp plate in the ramp's z strip, low
+  const approach = { min: [-W / 2 + 0.1, 0.0005, r.pos[2] - r.size[2] / 2], max: [footX, 0.3, r.pos[2] + r.size[2] / 2] };
+  const blockers = solids.filter(({ e, bb }) => e.tag !== "carpet" && !rampSet.has(e) && overlaps(approach, bb));
+  const flat = footX - (-W / 2 + 0.1);
   if (blockers.length) fail(`ramp approach blocked by ${blockers.map((b) => b.e.tag).join(",")}`);
-  else ok(`ramp approach clear: ${(p0[0] - (-W / 2 + 0.1)).toFixed(2)} m of floor before the foot`);
-  // the ramp volume itself must not intersect anything except carpet & its target desktop
-  const rbb = aabb(r);
-  const inRamp = solids.filter(({ e, bb }) => e !== r && e.tag !== "carpet" && e !== desk && overlaps(rbb, bb));
-  if (inRamp.length) fail(`ramp bounding box intersects ${inRamp.map((b) => b.e.tag + "@" + b.e.pos.map((n) => n.toFixed(2))).join(" ")}`);
+  else if (flat < 1.25 - 1e-6) fail(`ramp approach only ${flat.toFixed(2)} m of flat carpet before the first ramp plate (want ≥ 1.25)`);
+  else ok(`ramp approach clear: ${flat.toFixed(2)} m of flat carpet before the first ramp plate at x=${footX.toFixed(3)}`);
+  // the ramp volume itself must not intersect anything except carpet, other ramp plates & its target desktop
+  for (const rp of ramps) {
+    const rbb = aabb(rp);
+    const inRamp = solids.filter(({ e, bb }) => !rampSet.has(e) && e.tag !== "carpet" && e !== desk && overlaps(rbb, bb));
+    if (inRamp.length) fail(`ramp plate bounding box intersects ${inRamp.map((b) => b.e.tag + "@" + b.e.pos.map((n) => n.toFixed(2))).join(" ")}`);
+  }
   // headroom above the ramp: nothing within 0.3 m above the slope line inside the ramp's x/z span
-  const above = solids.filter(({ e, bb }) => e !== r && e !== desk && e.tag !== "carpet" && e.tag !== "ceiling" && bb.min[0] < rbb.max[0] && bb.max[0] > rbb.min[0] && bb.min[2] < rbb.max[2] && bb.max[2] > rbb.min[2] && bb.min[1] < rbb.max[1] + 0.3 && bb.max[1] > rbb.min[1]);
+  const rbb = aabb(r);
+  const above = solids.filter(({ e, bb }) => !rampSet.has(e) && e !== desk && e.tag !== "carpet" && e.tag !== "ceiling" && bb.min[0] < rbb.max[0] && bb.max[0] > rbb.min[0] && bb.min[2] < rbb.max[2] && bb.max[2] > rbb.min[2] && bb.min[1] < rbb.max[1] + 0.3 && bb.max[1] > rbb.min[1]);
   if (above.length) warn(`objects within 0.3 m above the ramp span: ${above.map((b) => b.e.tag).join(",")}`);
+  // landing zone on the desktop: first 0.5 m east of the crest must be empty above the desk
+  const landing = { min: [p1[0], 0.7505, r.pos[2] - r.size[2] / 2], max: [p1[0] + 0.5, 1.2, r.pos[2] + r.size[2] / 2] };
+  const landBlock = solids.filter(({ e, bb }) => e.tag !== "desktop" && !rampSet.has(e) && overlaps(landing, bb));
+  const landProps = PROPS.filter((p) => overlaps(landing, aabb(p)));
+  if (landBlock.length || landProps.length) fail(`ramp landing zone (x ${p1[0].toFixed(2)}..${(p1[0] + 0.5).toFixed(2)}) blocked by ${[...landBlock.map((b) => b.e.tag), ...landProps.map((p) => p.tag)].join(",")}`);
+  else ok(`ramp landing zone x ${p1[0].toFixed(2)}..${(p1[0] + 0.5).toFixed(2)} on the desk is clear`);
 }
 
 // ---------- route corridors (live room only) ----------
@@ -126,6 +165,7 @@ const corridor = (name, min, max, allow = new Set(["carpet"])) => {
 if (!fallback && room.BENCH_Z) {
   const X0 = room.BENCH_X - 4.8;
   corridor("spawn aisle (z -0.7..0.7, west end → east end, y<0.3)", [-7.6, 0.0005, -0.7], [5.2, 0.3, 0.7]);
+  corridor("aisle shoulders (z -0.8..0.8: chair bases stop at the desk-edge line)", [-6.0, 0.0005, -0.8], [5.2, 0.3, 0.8]);
   corridor("driven desk lane (z -2.15..-1.85, y 0.75..0.95)", [X0, 0.7505, -2.15], [X0 + 9.6, 0.95, -1.85], new Set(["desktop"]));
   corridor("divider gap on desk (x gap pitch, z -2.15..-1.05)", [X0 + 0.6 + room.GAP_PITCH * 1.2 - 0.5, 0.7505, -2.15], [X0 + 0.6 + room.GAP_PITCH * 1.2 + 0.5, 0.95, -1.05], new Set(["desktop"]));
   corridor("under-desk crossing (gap pitch, z -2.6..-0.6, y<0.3)", [X0 + 0.6 + room.GAP_PITCH * 1.2 - 0.5, 0.0005, -2.6], [X0 + 0.6 + room.GAP_PITCH * 1.2 + 0.5, 0.3, -0.6]);
@@ -142,9 +182,9 @@ propBBs.forEach(({ p, bb }, i) => {
   else {
     const gap = bb.min[1] - sup.y;
     if (gap < 0.0005 || gap > 0.01) fail(`PROPS[${i}] ${p.tag} floats ${gap.toFixed(4)} m above ${sup.e.tag} (want 0.001–0.01)`);
-    // full footprint must be supported (not hanging over an edge)
-    const sbb = aabb(sup.e);
-    if (bb.min[0] < sbb.min[0] || bb.max[0] > sbb.max[0] || bb.min[2] < sbb.min[2] || bb.max[2] > sbb.max[2]) warn(`PROPS[${i}] ${p.tag} overhangs the edge of ${sup.e.tag}`);
+    // full footprint must be supported by SOME piece at that height (seam strips and tile rows share the carpet top)
+    const holders = solids.filter(({ bb: b }) => !b.rotated && Math.abs(b.max[1] - sup.y) < 1e-6 && bb.min[0] >= b.min[0] && bb.max[0] <= b.max[0] && bb.min[2] >= b.min[2] && bb.max[2] <= b.max[2]);
+    if (!holders.length) warn(`PROPS[${i}] ${p.tag} overhangs the edge of ${sup.e.tag}`);
   }
   for (let j = i + 1; j < propBBs.length; j++) if (overlaps(bb, propBBs[j].bb)) fail(`PROPS[${i}] overlaps PROPS[${j}]`);
   for (const r of ramps) { const rbb = aabb(r); if (bb.min[0] < rbb.max[0] + 0.3 && bb.max[0] > rbb.min[0] - 0.9 && bb.min[2] < rbb.max[2] + 0.1 && bb.max[2] > rbb.min[2] - 0.1 && bb.min[1] < 0.75) fail(`PROPS[${i}] ${p.tag} is on/near the ramp or its approach`); }

@@ -199,18 +199,23 @@ const chaseOf = (pos, heading, back = 0.35, up = 0.1) => {
   const eye = new THREE.Vector3(pos[0] - Math.sin(heading) * back, pos[1] + up, pos[2] - Math.cos(heading) * back);
   return { eye, target: new THREE.Vector3(pos[0] + Math.sin(heading) * 0.3, pos[1] + 0.02, pos[2] + Math.cos(heading) * 0.3) };
 };
+// Keys are URL-safe: ./shot.sh out.png "http://localhost:8000/preview.html?view=overview"
+// ?view=<name> also hides every panel so the screenshot is just the room. ?panels=1 keeps them.
+const V = (ex, ey, ez, tx, ty, tz) => ({ eye: new THREE.Vector3(ex, ey, ez), target: new THREE.Vector3(tx, ty, tz) });
 const VIEWS = {
-  overview: { eye: new THREE.Vector3(-7.4, 2.6, 6.0), target: new THREE.Vector3(1.5, 0.5, -1.5) },
-  "top down": { eye: new THREE.Vector3(0, 14, 0.01), target: new THREE.Vector3(0, 0, 0) },
-  "east cabins": { eye: new THREE.Vector3(-2, 1.7, 4.5), target: new THREE.Vector3(6.5, 1.2, -1) },
-  "hero wall": { eye: new THREE.Vector3(-4, 1.6, 5), target: new THREE.Vector3(1, 1.0, -6) },
-  "spawn chase": chaseOf(SPAWN.pos, SPAWN.heading),
-  "ramp foot": ROUTE ? chaseOf(ROUTE.rampFoot, Math.PI / 2, 0.6, 0.15) : null,
-  "ramp crest": ROUTE ? chaseOf([ROUTE.rampCrest[0] - 0.3, ROUTE.rampCrest[1] - 0.1, ROUTE.rampCrest[2]], Math.PI / 2, 0.4, 0.12) : null,
-  "desk lane": ROUTE ? chaseOf([ROUTE.rampCrest[0] + 0.6, 0.75, ROUTE.rampCrest[2]], Math.PI / 2, 0.35, 0.1) : null,
-  "divider gap": ROUTE ? chaseOf([ROUTE.dividerGap[0], 0.75, ROUTE.dividerGap[2] - 0.35], 0, 0.35, 0.12) : null,
-  "cups": ROUTE ? chaseOf([ROUTE.cups[0] - 0.5, 0.04, ROUTE.cups[2] - 0.2], Math.PI / 3, 0.35, 0.1) : null,
-  "under desk": { eye: new THREE.Vector3(-0.6, 0.12, 0.2), target: new THREE.Vector3(-0.6, 0.1, -2.6) },
+  overview: V(-11, 7.5, 9.5, 0.5, 0.0, -0.8),           // over the south-west corner, whole room (ceiling hidden)
+  west: V(-7.9, 1.25, -3.3, -4.5, 0.5, -1.7),            // ramp + approach + pillar, from the north-west
+  ramp: ROUTE ? chaseOf(ROUTE.rampFoot, Math.PI / 2, 0.6, 0.15) : null,
+  aisle: chaseOf(SPAWN.pos, SPAWN.heading, 0.35, 0.1),   // what the car sees at spawn
+  "aisle-high": V(-7.6, 0.45, 0, 4, 0.3, 0),             // knee-height look down the driving corridor
+  "hero-wall": V(-3.5, 1.5, 4.5, 1.0, 1.0, -6.5),
+  "desk-lane": ROUTE ? chaseOf([ROUTE.rampCrest[0] + 0.6, 0.75, ROUTE.rampCrest[2]], Math.PI / 2, 0.35, 0.1) : null,
+  crest: ROUTE ? chaseOf([ROUTE.rampCrest[0] - 0.3, ROUTE.rampCrest[1] - 0.1, ROUTE.rampCrest[2]], Math.PI / 2, 0.4, 0.12) : null,
+  cabins: V(-2, 1.7, 4.5, 6.5, 1.2, -1),
+  "divider-gap": ROUTE ? chaseOf([ROUTE.dividerGap[0], 0.75, ROUTE.dividerGap[2] - 0.35], 0, 0.35, 0.12) : null,
+  cups: ROUTE ? chaseOf([ROUTE.cups[0] - 0.6, 0.05, ROUTE.cups[2] - 0.3], Math.PI / 4, 0.4, 0.12) : null,
+  "under-desk": V(-0.6, 0.12, 0.2, -0.6, 0.1, -2.6),
+  top: V(0, 14, 0.01, 0, 0, 0),
 };
 const viewsEl = document.getElementById("views");
 for (const [name, v] of Object.entries(VIEWS)) {
@@ -222,11 +227,14 @@ for (const [name, v] of Object.entries(VIEWS)) {
 // restore camera across live reloads
 const saved = sessionStorage.getItem("previewCam");
 const forced = params.get("view");
-if (forced && VIEWS[forced]) { camera.position.copy(VIEWS[forced].eye); controls.target.copy(VIEWS[forced].target); }
-else if (saved) { const s = JSON.parse(saved); camera.position.fromArray(s.eye); controls.target.fromArray(s.target); }
-else { camera.position.copy(VIEWS.overview.eye); controls.target.copy(VIEWS.overview.target); }
+if (forced && VIEWS[forced]) {
+  camera.position.copy(VIEWS[forced].eye); controls.target.copy(VIEWS[forced].target);
+  if (!params.has("panels")) for (const id of ["hud", "light", "msg"]) document.getElementById(id).style.display = "none";
+} else if (forced) say(`unknown view "${forced}"; known: ${Object.keys(VIEWS).join(", ")}`, true);
+if (!forced && saved) { const s = JSON.parse(saved); camera.position.fromArray(s.eye); controls.target.fromArray(s.target); }
+else if (!forced) { camera.position.copy(VIEWS.overview.eye); controls.target.copy(VIEWS.overview.target); }
 controls.update();
-setInterval(() => sessionStorage.setItem("previewCam", JSON.stringify({ eye: camera.position.toArray(), target: controls.target.toArray() })), 500);
+if (!forced) setInterval(() => sessionStorage.setItem("previewCam", JSON.stringify({ eye: camera.position.toArray(), target: controls.target.toArray() })), 500);
 
 // ---------- toggles ----------
 const tgl = (id, fn, init = true) => { const el = document.getElementById(id); let on = init; el.classList.toggle("on", on); fn(on); el.onclick = () => { on = !on; el.classList.toggle("on", on); fn(on); }; };

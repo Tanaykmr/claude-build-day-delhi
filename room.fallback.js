@@ -1,6 +1,6 @@
 // room.fallback.js — Snap the Room v3, owner B (Chirag).
 // Tested simple room. Exports the SAME names as room.js. Selected with /?fallback=1 BEFORE imports.
-// Frozen at the minute-30 milestone; do not edit afterwards. No props are loaded in fallback mode.
+// Kept as a tested rehearsal room: only the ramp math is mirrored from room.js. No props are loaded in fallback mode.
 
 export const SPAWN = { pos: [-7.0, 0.07, 0], heading: Math.PI / 2 };
 
@@ -10,9 +10,15 @@ const W = 16,
 const DESK_TOP = 0.75,
   TOP_T = 0.04,
   RUN_LEN = 9.6;
-const BENCH_X = 0.6,
-  BENCH_Z = -1.6,
+const BENCH_Z = -1.6,
   DIV_H = 0.37;
+// Ramp parameters mirrored from room.js (same math): 17°, 1.25 m flat approach, 0.12 m foot fillet.
+const RAMP_DEG = 17;
+const RAMP_RUN = +(DESK_TOP / Math.tan((RAMP_DEG * Math.PI) / 180)).toFixed(3); // 2.453
+const FLAT_APPROACH = 1.25,
+  FOOT_FILLET = 0.12,
+  CREST_FILLET = 0.1;
+const BENCH_X = +(-W / 2 + 0.1 + FLAT_APPROACH + FOOT_FILLET + RAMP_RUN + RUN_LEN / 2).toFixed(3); // 0.723
 const X0 = BENCH_X - RUN_LEN / 2;
 
 const R = [];
@@ -42,24 +48,34 @@ for (let s = 0; s < 8; s++) {
   add([X0 + 0.6 + s * 1.2, DESK_TOP + DIV_H / 2, BENCH_Z], [1.14, DIV_H, 0.05], "#2b3a5c", "divider");
 }
 
-// Ramp: floor → west edge of the north desktop lane (z = -1.9). Same math as room.js.
-const p0 = [X0 - 2.45, 0, BENCH_Z - 0.3];
-const p1 = [X0, DESK_TOP, BENCH_Z - 0.3];
-const dx = p1[0] - p0[0],
-  dy = p1[1] - p0[1];
-const theta = Math.atan2(dy, dx);
-const length = Math.hypot(dx, dy);
-const thickness = 0.01;
-add(
-  [
-    (p0[0] + p1[0]) / 2 + (Math.sin(theta) * thickness) / 2,
-    (p0[1] + p1[1]) / 2 - (Math.cos(theta) * thickness) / 2,
-    p0[2],
-  ],
-  [length, thickness, 0.4],
-  "#b8b0a4",
-  "ramp",
-  [0, 0, theta]
-);
+// Ramp: floor → west edge of the north desktop lane (z = -1.9). Same math as room.js: every plate is
+// placed by its top-face endpoints; subtract half-thickness along the rotated top normal (-sinθ, cosθ, 0).
+const plate = (a, b, width, thickness, color, tag) => {
+  const ddx = b[0] - a[0];
+  const ddy = b[1] - a[1];
+  const th = Math.atan2(ddy, ddx);
+  const len = Math.hypot(ddx, ddy);
+  add(
+    [(a[0] + b[0]) / 2 + (Math.sin(th) * thickness) / 2, (a[1] + b[1]) / 2 - (Math.cos(th) * thickness) / 2, a[2]],
+    [len, thickness, width],
+    color,
+    tag,
+    [0, 0, th]
+  );
+};
+const LZ = BENCH_Z - 0.3;
+const p0 = [+(X0 - RAMP_RUN).toFixed(3), 0, LZ];
+const p1 = [X0, DESK_TOP, LZ];
+const theta = Math.atan2(p1[1] - p0[1], p1[0] - p0[0]);
+plate(p0, p1, 0.4, 0.01, "#b8b0a4", "ramp");
+// foot fillet: half-angle entry plate, starts flush on the carpet, meets the ramp face (no lip)
+{
+  const t1 = Math.tan(theta),
+    t2 = Math.tan(theta / 2);
+  const meetDx = (FOOT_FILLET * t2) / (t1 - t2);
+  plate([p0[0] - FOOT_FILLET, 0, LZ], [p0[0] + meetDx, meetDx * t1, LZ], 0.4, 0.01, "#b8b0a4", "ramp");
+}
+// crest fillet: chord under the concave crest corner, bridges the ramp/desk seam, never above 0.75
+plate([X0 - CREST_FILLET, DESK_TOP - CREST_FILLET * Math.tan(theta), LZ], [X0 + CREST_FILLET, DESK_TOP, LZ], 0.4, 0.01, "#b8b0a4", "ramp");
 
 export const ROOM = R;
