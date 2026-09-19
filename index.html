@@ -18,8 +18,11 @@
     .hud-panel { background: var(--navy); border: 1px solid var(--edge); border-radius: 14px; box-shadow: 0 6px 22px rgba(6, 8, 18, .35); }
     @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) { .hud-panel { backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); } }
     .hud-tl { position: absolute; top: 20px; left: 20px; min-width: 214px; padding: 10px 18px 12px; }
-    .hud-name { font-size: 15px; line-height: 1.1; letter-spacing: .18em; color: var(--yellow); text-shadow: var(--hud-shadow); }
-    .subtitle { margin: 3px 0 0; font: 600 12px/1.2 system-ui, sans-serif; letter-spacing: 0; text-transform: none; color: #d9dde6; opacity: .85; }
+    .hud-title { display: flex; align-items: baseline; gap: 7px; padding-bottom: 7px; border-bottom: 1px solid var(--edge); }
+    .hud-name { font-size: 19px; line-height: 1; letter-spacing: .13em; font-style: italic; text-shadow: var(--hud-shadow); }
+    .hud-name.accent { color: var(--yellow); }
+    .subtitle + .hud-race { margin-top: 7px; }
+    .subtitle { margin: 7px 0 0; font-size: 11px; letter-spacing: .2em; color: var(--ink); opacity: .62; }
     .hud-race { display: flex; gap: 16px; margin-top: 6px; font-size: 19px; text-shadow: var(--hud-shadow); }
     .hud-race b { color: var(--lime); font-weight: 800; }
     .hud-race .warn { color: var(--coral); }
@@ -80,8 +83,8 @@
 <body>
   <div id="hud">
     <div class="hud-panel hud-tl">
-      <div class="hud-name">Snap the Room</div>
-      <p class="subtitle">A little car. A familiar office.</p>
+      <div class="hud-title"><span class="hud-name">Snap</span><span class="hud-name accent">the Room</span></div>
+      <p class="subtitle">Free drive</p>
       <div class="hud-race" id="race-status" hidden><span>Lap <b id="hud-lap">1/3</b></span><span>Pos <b id="hud-pos">4/4</b></span><span id="hud-time">0:00.0</span></div>
     </div>
     <canvas id="minimap" class="hud-panel" width="448" height="368" hidden aria-label="Minimap"></canvas>
@@ -301,11 +304,26 @@
         roomBounds.union(bounds);
         if (entry.tag === 'carpet') floorBounds.union(bounds);
       }
+      // Per-instance tint: a seeded few-percent shift in value and warmth per instance, so a run of forty
+      // identical chairs stops reading as a photocopy of one chair. It costs no extra draw group and no extra
+      // material — instanceColor multiplies whatever the material already has, including the texture pack's maps.
+      const TINTED = new Set(['chair', 'monitor', 'desktop', 'cabin', 'desk-item', 'plant', 'storage', 'divider', 'cpu', 'bench']);
+      const tint = new THREE.Color();
+      let tintSeed = 1337;
+      const tintRnd = () => ((tintSeed = (tintSeed * 1664525 + 1013904223) >>> 0) / 4294967296);
       const obstacles = [];
       for (const [mat, transforms] of groups) {
         const mesh = new THREE.InstancedMesh(box, mat, transforms.length);
         transforms.forEach((m, i) => mesh.setMatrixAt(i, m));
         mesh.instanceMatrix.needsUpdate = true;
+        if (TINTED.has(transforms.tag)) {
+          for (let i = 0; i < transforms.length; i++) {
+            const value = .95 + tintRnd() * .1;                       // ±5% brightness
+            tint.setRGB(value * (1 + tintRnd() * .012), value, value * (1 - tintRnd() * .012)); // a hair warmer or cooler
+            mesh.setColorAt(i, tint);
+          }
+          mesh.instanceColor.needsUpdate = true;
+        }
         mesh.computeBoundingSphere();
         mesh.receiveShadow = shadows;
         mesh.castShadow = shadows && transforms.tag !== 'ceiling'; // the ceiling slab would shadow the whole room
@@ -448,6 +466,30 @@
         visual.blob.quaternion.setFromAxisAngle(yAxis, heading).premultiply(blobTilt);
         visual.blob.material.opacity = Math.max(0, Math.min(1, 1.2 - (hit.timeOfImpact - .02) / .12));
       }
+      // Soft contact shadow under each prop: the same radial sprite the car uses, sized to the prop's footprint and
+      // dropped onto whatever is underneath it (floor, desktop, another prop). Twelve downward rays a frame is
+      // nothing next to the suspension's, and it stops the cups and bins looking pasted onto the carpet.
+      const propShadows = props.map(({ mesh }) => {
+        const span = Math.max(mesh.scale.x, mesh.scale.z) * 2.2;
+        const shadow = new THREE.Mesh(
+          new THREE.PlaneGeometry(span, span).rotateX(-Math.PI / 2),
+          new THREE.MeshBasicMaterial({ map: blobTexture, transparent: true, opacity: .8, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+        shadow.renderOrder = 1;
+        scene.add(shadow);
+        return shadow;
+      });
+      function placePropShadow(i, body, position) {
+        const shadow = propShadows[i];
+        groundRay.origin = position;
+        const hit = world.castRayAndGetNormal(groundRay, .5, true, undefined, undefined, undefined, body);
+        shadow.visible = !!hit;
+        if (!hit) return;
+        surfaceNormal.set(hit.normal.x, hit.normal.y, hit.normal.z);
+        shadow.position.set(position.x, position.y - hit.timeOfImpact, position.z).addScaledVector(surfaceNormal, .0018);
+        blobTilt.setFromUnitVectors(yAxis, surfaceNormal);
+        shadow.quaternion.copy(blobTilt);
+        shadow.material.opacity = Math.max(0, Math.min(.8, .9 - hit.timeOfImpact / .1));
+      }
       // Racers: index 0 is the player; the three rivals exist from boot (same createCar/stepVehicle, same handling)
       // but are disabled and hidden until a race starts, so the interpolation tables stay fixed-size.
       const RACE = roomModule.RACE || null;
@@ -485,9 +527,9 @@
       const geometry = rampGeometry(ROOM, roomModule);
       let demo = params.has('demo') && geometry ? createDriver(demoPhases(geometry, SPAWN)) : null;
       const subtitle = document.querySelector('.subtitle');
-      const baseSubtitle = `A little car. A familiar office.${fallback ? ' · simple room' : ''}${handling !== DEFAULT_HANDLING ? ` · ${handling} handling` : ''}`;
+      const baseSubtitle = `Free drive${fallback ? ' · simple room' : ''}${handling !== DEFAULT_HANDLING ? ` · ${handling} handling` : ''}`;
       subtitle.textContent = baseSubtitle;
-      if (demo) subtitle.textContent = 'Demo route playing · press any driving key to take over';
+      if (demo) subtitle.textContent = 'Demo route · any key to take over';
       let resetRequested = false, paused = (script.length || demo || strip || params.get('mode') === 'race') ? false : document.hidden || !document.hasFocus();
       let accumulator = 0, lastTime = null, snapCamera = true, simTime = 0;
       function clearInput() { held.clear(); resetRequested = false; }
@@ -681,9 +723,10 @@
         racers.forEach((r, i) => { if (r.visual.group.visible) syncRacer(r, i, alpha); });
         carHeading = racers[0].heading;
         const offset = racers.length;
-        props.forEach(({ mesh }, i) => {
+        props.forEach(({ body, mesh }, i) => {
           mesh.position.lerpVectors(prevPose[offset + i].p, currPose[offset + i].p, alpha);
           mesh.quaternion.slerpQuaternions(prevPose[offset + i].q, currPose[offset + i].q, alpha);
+          placePropShadow(i, body, mesh.position);
         });
       }
       // ---- HUD: written only when a value changes (Joyride's pattern), minimap redrawn each frame while visible ----
@@ -827,6 +870,10 @@
       const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), camFwd = { x: Math.sin(SPAWN.heading), z: Math.cos(SPAWN.heading) };
       const rayDirection = new THREE.Vector3(), lifted = new THREE.Vector3(), raycaster = new THREE.Raycaster();
       const camState = { clip: 1, lift: 0, blocked: false }; // hysteretic obstruction state (exposed to diagnostics)
+      // Field of view opens with speed (Joyride does the same): 60° parked → 70° flat out, eased on frame time so
+      // it breathes rather than snaps. Fixed-camera captures (?cam=) keep 60° so comparison shots stay comparable.
+      const FOV = Object.freeze({ base: 60, span: 10, ease: 3, full: 1.2 });
+      let fov = FOV.base;
       const ease = (rate, dt) => 1 - Math.exp(-rate * dt);
       // Debug hook: ?cam=x,y,z fixes the camera at a world position, always looking at the car.
       const fixedCamera = (params.get('cam') || '').split(',').map(Number);
@@ -865,7 +912,11 @@
         camState.lift += (wantLift - camState.lift) * ease(wantLift > camState.lift ? CAMERA.shortenRate : CAMERA.restoreRate, dt);
         if (snapCamera) { camState.clip = wantClip; camState.lift = wantLift; }
         camera.position.lerpVectors(anchor, camPos, camState.clip); camera.position.y += camState.lift * CAMERA.lift;
-        camera.lookAt(camLook); snapCamera = false;
+        camera.lookAt(camLook);
+        const wantFov = FOV.base + FOV.span * Math.min(1, Math.abs(car.vF) / FOV.full);
+        fov += (wantFov - fov) * (snapCamera ? 1 : ease(FOV.ease, dt));
+        if (Math.abs(camera.fov - fov) > .01) { camera.fov = fov; camera.updateProjectionMatrix(); }
+        snapCamera = false;
         // Restrained impact impulse: a few millimetres of decaying jitter on hard hits only (never on the look target).
         if (camShake > 1e-5) { camera.position.x += (Math.random() - .5) * 2 * camShake; camera.position.y += (Math.random() - .5) * camShake; camera.position.z += (Math.random() - .5) * 2 * camShake; camShake *= Math.exp(-7 * dt); }
       }
@@ -951,7 +1002,7 @@
             if (debug) {
               diagnostics.hidden = false;
               const p = car.body.translation();
-              diagnostics.textContent = `${Math.round(frames / sampleTime)} fps · ${renderer.info.render.calls} draws\n${renderer.info.render.triangles} triangles · ${ROOM.length} fixed · ${PROPS.length} props\nposition ${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)}\nwheel contacts ${WHEELS.map((_, i) => +car.controller.wheelIsInContact(i)).join(' ')}\nhandling ${handling} · vF ${car.vF.toFixed(2)} vL ${car.vL.toFixed(2)}${car.slipping ? ' sliding' : ''}${car.airborne ? ' airborne' : ''}\ncamera clip ${camState.clip.toFixed(2)} lift ${camState.lift.toFixed(2)}${camState.blocked ? ' blocked' : ''}${race ? `\nrace ${race.phase} clock ${race.clock.toFixed(1)} · ${racers.map((r, i) => `${r.name} L${race.cars[i].lap} cp${race.cars[i].next}${r.driver ? ` s${r.driver.stuckCount}` : ''}`).join(' · ')}` : ''}\nrAF ${Math.round(frames / sampleTime)} Hz · steps/frame 0:${stepHist[0]} 1:${stepHist[1]} 2:${stepHist[2]}${stepHist.slice(3).some(Boolean) ? ` 3+:${stepHist.slice(3).reduce((a, b) => a + b, 0)}` : ''} · physics ${stepCount ? (stepMs / stepCount).toFixed(2) : '–'} ms/step`;
+              diagnostics.textContent = `${Math.round(frames / sampleTime)} fps · ${renderer.info.render.calls} draws\n${renderer.info.render.triangles} triangles · ${ROOM.length} fixed · ${PROPS.length} props\nposition ${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)}\nwheel contacts ${WHEELS.map((_, i) => +car.controller.wheelIsInContact(i)).join(' ')}\nhandling ${handling} · vF ${car.vF.toFixed(2)} vL ${car.vL.toFixed(2)}${car.slipping ? ' sliding' : ''}${car.airborne ? ' airborne' : ''}\ncamera clip ${camState.clip.toFixed(2)} lift ${camState.lift.toFixed(2)} fov ${camera.fov.toFixed(1)}${camState.blocked ? ' blocked' : ''}${race ? `\nrace ${race.phase} clock ${race.clock.toFixed(1)} · ${racers.map((r, i) => `${r.name} L${race.cars[i].lap} cp${race.cars[i].next}${r.driver ? ` s${r.driver.stuckCount}` : ''}`).join(' · ')}` : ''}\nrAF ${Math.round(frames / sampleTime)} Hz · steps/frame 0:${stepHist[0]} 1:${stepHist[1]} 2:${stepHist[2]}${stepHist.slice(3).some(Boolean) ? ` 3+:${stepHist.slice(3).reduce((a, b) => a + b, 0)}` : ''} · physics ${stepCount ? (stepMs / stepCount).toFixed(2) : '–'} ms/step`;
             }
             frames = 0; sampleTime = 0; stepHist.fill(0); stepMs = 0; stepCount = 0;
           }

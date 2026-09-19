@@ -80,6 +80,10 @@ try {
   await send('Runtime.enable');
   await send('Page.enable');
   await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+  // Without this the page reports no focus, and the game pauses itself on blur: every capture showed the Paused
+  // overlay over a dimmed frame instead of the running scene.
+  await send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
+  await send('Page.bringToFront').catch(() => {});
   await send('Page.navigate', { url });
   // Ready = the renderer's canvas exists and the startup overlay is no longer on its loading message. A page
   // that fails outright (the error overlay) is also "ready": capturing it is how the failure gets reported.
