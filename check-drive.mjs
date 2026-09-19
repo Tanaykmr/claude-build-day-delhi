@@ -148,11 +148,11 @@ async function testRoom(path) {
   r = drive(ctx, 1.2, BRAKE, { until: s => s.speed < .02 });
   report('d. brake stops within ~1 s', !r.failure && r.reached && r.last.t - b.t <= 1.05, r.failure || `stopped after ${f3(r.last.t - b.t)} s at ${fmt(r.last)}`);
 
-  // (c) steering: hold left from rest, heading must increase (left as seen from behind the car)
-  const c0 = snapshot(car).heading;
-  r = drive(ctx, 2, () => ({ throttle: 1, steer: 1, brake: false }));
+  // (c) steering: hold left from rest, heading must increase (left as seen from behind the car). The turn is
+  // accumulated step by step (unwrapped) so a car that swings past 180° in 2 s is still measured correctly.
+  let cPrev = snapshot(car).heading, turn = 0;
+  r = drive(ctx, 2, () => ({ throttle: 1, steer: 1, brake: false }), { watch: s => { turn += wrap0(s.heading - cPrev); cPrev = s.heading; return null; } });
   const c = r.last;
-  const turn = Math.atan2(Math.sin(c.heading - c0), Math.cos(c.heading - c0));
   report('c. steer left → heading positive', !r.failure && turn > .4 && r.minUp > .9, r.failure || `Δheading=${f3(turn)} rad in 2 s, ${fmt(c)}`);
   drive(ctx, 1, BRAKE);
 

@@ -2,6 +2,14 @@
 // check-drive.mjs so the browser car and the headless test car cannot drift apart.
 // Pure Rapier; no THREE or DOM. RAPIER is passed in because the browser loads it from the CDN
 // and Node loads it from node_modules.
+//
+// Attribution: the 'joyride' handling (planar forward/lateral model, speed-scaled steering authority,
+// throttle taper, brake-before-reverse, reverse cap, rolling + quadratic drag, grip/drift lateral decay,
+// bicycle-model yaw target with sliding yaw inertia, visual squat/lean) and the chase-camera equations
+// ported in index.html are adapted from Joyride by nitzangames — https://github.com/nitzangames/joyride,
+// revision ea4285dd07215002f0422c2e518320e83969704c, src/logic/vehicle.js and src/logic/camera.js,
+// ISC license. Constants are rescaled for a 12 cm RC car (see JOYRIDE below); Joyride itself is a flat city,
+// so suspension, ramps, landings and collisions here stay with Rapier.
 
 // Geometry notes: the wheel contact point sits (wheelR + compressed suspension - wheelY) below the body
 // origin. Keep that small relative to wheelX (roll-over) and wheelZ (wheelie) — a 0.15 kg car with
@@ -29,6 +37,47 @@ export const WHEELS = [
   [-CAR.wheelX, CAR.wheelY, -CAR.wheelZ], [CAR.wheelX, CAR.wheelY, -CAR.wheelZ],
 ];
 export const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+
+// Handling selector. 'classic' = the Rapier DynamicRayCastVehicleController drives, brakes and grips
+// (engine force / brake impulse / tire friction). 'joyride' = the controller does suspension and wheel
+// contact ONLY; propulsion, braking, lateral grip and yaw are Joyride's planar model written onto the
+// chassis velocity. Chosen per car in createCar({ handling }); index.html reads ?handling=, check-drive.mjs
+// reads --handling=. Never a global.
+export const HANDLINGS = Object.freeze(['classic', 'joyride']);
+export const DEFAULT_HANDLING = 'classic';
+
+// Joyride CRUISER → 12 cm RC car. Scaling decisions (Joyride values in brackets):
+// • Speed. maxSpeed stays the office's 1.2 m/s = 10 car lengths/s [32 m/s = 7 lengths/s]; the room, ramp and
+//   lane widths were validated at this speed, and lengths/s are already the same order, so seconds are
+//   comparable between the two cars and per-second rates (grip, easing) are copied unscaled.
+// • Accel 4.5 m/s² [8]. NOT scaled by the accel:maxSpeed ratio (0.25 s⁻¹ → 0.3 m/s²): the 17° ramp adds
+//   g·sin17° = 2.87 m/s² of downhill pull, so with the (1-(v/max)²) taper the motor needs ≥ ~4 m/s² to hold
+//   0.7 m/s on the slope. Time to 95% of top speed ≈ 1.83·max/accel = 0.5 s [7.3 s]; that snappiness is what
+//   a 150 g RC car does, and what the classic controller already did.
+// • Brake 3 m/s² [14]. Joyride's brake:accel ratio (1.75) would give 8 m/s² and a 0.15 s stop; Joyride's
+//   stopping distance (8 lengths) would give 0.75 m/s² and a 1.6 s stop that overruns the 0.575 m desk lane.
+//   3 m/s² stops from top speed in 0.4 s over 0.24 m (2 lengths), inside check (d)'s 1.05 s gate.
+// • Grip 7 /s, driftGrip 2.2 /s, steer/yaw easing 8 /s and 3 /s, visual easing 6 /s: per-second rates, copied.
+// • slipThreshold 0.28 m/s [6 m/s]. The maxSpeed ratio alone gives 0.225 (18.75% of top speed), but the
+//   lateral speed a corner builds is vF·yawRate/grip and our yawRate per unit of speed fraction is 1.25× the
+//   CRUISER's (10 lengths/s over a 0.70-length wheelbase vs 7 over 0.61). Multiplying by that 1.25 keeps the
+//   same grip envelope: full lock holds up to ~60% of top speed and breaks away above it, as in Joyride.
+// • steerMax 0.5 rad [0.5], authority 1-0.6·|vF|/max [same]; wheelbase = 2·wheelZ = 0.084 m [2.8 m].
+//   Low-speed turning radius wheelbase/tan(steerMax) = 0.154 m = 1.3 lengths [5.1 m = 1.1 lengths].
+// • Drag: rolling 0.12 /s, quadratic 0.08 /m chosen so each costs the same FRACTION of accel at top speed
+//   as Joyride's do (3.2% and 2.5%) [0.008 /s, 0.0002 /m]. Drag alone would still let gravity take the car
+//   to ~6 m/s down the ramp, so the classic downhill governor is kept: engine braking above governor·maxSpeed.
+// • reverseCap 35% [35%]; brake-before-reverse and "nearly stopped" thresholds 0.02 m/s [0.5 m/s], handbrake
+//   creep kill 0.011 m/s [0.3 m/s], both scaled by the maxSpeed ratio; handbrake drag 0.6·brake [same].
+// • Airborne = fewer than 2 wheels in contact: no traction, no yaw authority, Rapier integrates gravity.
+// • Visual squat/lean: pitch = -0.012·aF, roll = 0.02·yawRate·vF, clamped ±0.12 rad [same]; visual only.
+const JOYRIDE_DEFAULTS = {
+  maxSpeed: 1.2, accel: 4.5, brake: 3, grip: 7, driftGrip: 2.2, steerMax: .5, wheelbase: 2 * CAR.wheelZ,
+  slipThreshold: .28, rollingDrag: .12, quadDrag: .08, reverseCap: .35, stopThreshold: .02,
+  handbrakeCreep: .011, handbrakeBrake: .6, governor: 1.25, steerEase: 8, yawEase: 3, minContacts: 2,
+  visEase: 6, visPitchPerAccel: -.012, visRollPerAccel: .02, visClamp: .12,
+};
+export const JOYRIDE = Object.freeze({ ...JOYRIDE_DEFAULTS, ...(globalThis.CAR_OVERRIDE?.joyride || {}) });
 
 export function headingQuaternion(heading) {
   return { x: 0, y: Math.sin(heading / 2), z: 0, w: Math.cos(heading / 2) };
@@ -58,7 +107,9 @@ export function createWorld(RAPIER) {
   return world;
 }
 
-export function createCar(RAPIER, world, spawn) {
+export function createCar(RAPIER, world, spawn, { handling = DEFAULT_HANDLING } = {}) {
+  if (!HANDLINGS.includes(handling)) throw new Error(`Unknown handling "${handling}"; choose one of ${HANDLINGS.join(', ')}.`);
+  const joyride = handling === 'joyride';
   const body = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
     .setTranslation(...spawn.pos)
     .setRotation(headingQuaternion(spawn.heading))
@@ -78,10 +129,18 @@ export function createCar(RAPIER, world, spawn) {
     controller.setWheelSuspensionCompression(i, CAR.compression);
     controller.setWheelSuspensionRelaxation(i, CAR.relaxation);
     controller.setWheelMaxSuspensionTravel(i, CAR.suspTravel);
-    controller.setWheelFrictionSlip(i, CAR.frictionSlip);
-    controller.setWheelSideFrictionStiffness(i, CAR.sideFriction);
+    // Joyride path: the controller must apply NO tire forces. frictionSlip 0 caps the wheel friction
+    // impulse circle at zero and sideFrictionStiffness 0 zeroes the lateral impulse; engine force and brake
+    // stay 0 every step (stepJoyride). Only the suspension impulses remain — one authority per behavior.
+    controller.setWheelFrictionSlip(i, joyride ? 0 : CAR.frictionSlip);
+    controller.setWheelSideFrictionStiffness(i, joyride ? 0 : CAR.sideFriction);
   });
-  return { body, controller, steering: 0, upsideDown: 0 };
+  return {
+    body, controller, handling, steering: 0, upsideDown: 0,
+    // Handling state shared with the HUD, mesh and tests. vF/vL are vehicle-relative forward/lateral speed;
+    // brakeLight 0 off, 1 braking, 2 reversing; visPitch/visRoll are visual-only body squat/lean (radians).
+    vF: 0, vL: 0, aF: 0, yawRate: 0, contacts: 0, airborne: false, slipping: false, brakeLight: 0, visPitch: 0, visRoll: 0,
+  };
 }
 
 export function forwardVector(q) {
@@ -114,11 +173,20 @@ export function pitchRoll(q) {
   return { pitch: Math.asin(clamp(f.y, -1, 1)), roll: Math.asin(clamp(l.y, -1, 1)) };
 }
 
-// input: { throttle: -1..1, steer: -1..1 (+ = left), brake: boolean }
+// input: { throttle: -1..1, steer: -1..1 (+ = left), brake: boolean (Space), handbrake: boolean (Shift) }
+// handbrake is only honored by the joyride handling; classic ignores it.
 export function stepVehicle(car, input) {
+  input = {
+    throttle: Number.isFinite(input.throttle) ? clamp(input.throttle, -1, 1) : 0,
+    steer: Number.isFinite(input.steer) ? clamp(input.steer, -1, 1) : 0,
+    brake: !!input.brake, handbrake: !!input.handbrake,
+  };
+  if (input.throttle || input.steer || input.brake || input.handbrake) car.body.wakeUp();
+  if (car.handling === 'joyride') stepJoyride(car, input); else stepClassic(car, input);
+}
+
+function stepClassic(car, input) {
   const { body, controller } = car;
-  input = { throttle: Number.isFinite(input.throttle) ? input.throttle : 0, steer: Number.isFinite(input.steer) ? input.steer : 0, brake: !!input.brake };
-  if (input.throttle || input.steer || input.brake) body.wakeUp();
   car.steering += (input.steer * CAR.maxSteer - car.steering) * CAR.steerLerp;
   const speed = forwardSpeed(car);
   const opposing = input.throttle && speed * input.throttle < -.05;
@@ -136,6 +204,109 @@ export function stepVehicle(car, input) {
   }
   // Explicitly exclude the chassis from suspension rays.
   controller.updateVehicle(STEP, undefined, undefined, collider => collider.parent()?.handle !== body.handle);
+  car.vF = forwardSpeed(car); car.vL = lateralSpeed(car);
+  car.contacts = wheelContacts(car).reduce((n, c) => n + c, 0);
+  car.brakeLight = braking ? 1 : car.vF < -.05 ? 2 : 0;
+}
+
+// Joyride's planar model on top of Rapier's suspension. Order per step: (1) controller suspension update
+// with zero engine/brake/friction, (2) read the FRESH chassis velocity (collision impulses, suspension and
+// gravity are all in it — nothing is restored from a stored value), (3) decompose into forward/lateral/normal
+// on the averaged wheel-contact plane, (4) Joyride's engine, brake, drag, grip and yaw, (5) write back the
+// planar components; the normal component and Rapier's pitch/roll angular velocity survive untouched.
+function stepJoyride(car, input) {
+  const { body, controller } = car, J = JOYRIDE, dt = STEP;
+  for (let i = 0; i < 4; i++) {
+    controller.setWheelSteering(i, i < 2 ? car.steering : 0); // visual + ray bookkeeping only (friction is zero)
+    controller.setWheelEngineForce(i, 0);
+    controller.setWheelBrake(i, 0);
+  }
+  controller.updateVehicle(dt, undefined, undefined, collider => collider.parent()?.handle !== body.handle);
+
+  // Steering: less lock the faster you go, eased so the wheels have weight.
+  const sf = clamp(Math.abs(car.vF) / J.maxSpeed, 0, 1);
+  car.steering += (input.steer * J.steerMax * (1 - .6 * sf) - car.steering) * Math.min(J.steerEase * dt, 1);
+
+  // Contact plane = average normal of the wheels that touch something.
+  let nx = 0, ny = 0, nz = 0, contacts = 0;
+  for (let i = 0; i < 4; i++) {
+    if (!controller.wheelIsInContact(i)) continue;
+    const n = controller.wheelContactNormal(i);
+    if (n) { nx += n.x; ny += n.y; nz += n.z; contacts++; }
+  }
+  car.contacts = contacts;
+  const q = body.rotation(), f0 = forwardVector(q);
+  let nl = Math.hypot(nx, ny, nz);
+  if (nl > 1e-6) { nx /= nl; ny /= nl; nz /= nl; }
+  // Forward projected onto the contact plane; right = forward × normal (Joyride: right = (-fz, fx) for Y up).
+  const fd = f0.x * nx + f0.y * ny + f0.z * nz;
+  let fx = f0.x - fd * nx, fy = f0.y - fd * ny, fz = f0.z - fd * nz;
+  const fl = Math.hypot(fx, fy, fz);
+  const kv = Math.min(J.visEase * dt, 1);
+  if (contacts < J.minContacts || nl <= 1e-6 || fl < .3) {
+    // Airborne (or standing on its nose): no traction, no yaw authority. Rapier keeps integrating gravity,
+    // the existing angular velocity and any contact impulses.
+    car.airborne = true; car.slipping = false; car.aF = 0;
+    car.vF = forwardSpeed(car); car.vL = lateralSpeed(car);
+    car.brakeLight = input.brake || input.handbrake ? 1 : car.vF < -J.handbrakeCreep ? 2 : 0;
+    car.visPitch -= car.visPitch * kv; car.visRoll -= car.visRoll * kv;
+    return;
+  }
+  car.airborne = false;
+  fx /= fl; fy /= fl; fz /= fl;
+  const rx = fy * nz - fz * ny, ry = fz * nx - fx * nz, rz = fx * ny - fy * nx;
+  const v = body.linvel(); // fresh: this is where collisions push the car around
+  let vF = v.x * fx + v.y * fy + v.z * fz;
+  let vL = v.x * rx + v.y * ry + v.z * rz;
+  const vN = v.x * nx + v.y * ny + v.z * nz;
+
+  // Engine and brakes along the car's forward axis.
+  const { throttle } = input;
+  let aF = 0;
+  if (input.brake) {
+    // Space: service brake, overrides throttle (PRD). Holds the car once it is nearly stopped.
+    if (vF > J.stopThreshold) aF = -J.brake; else if (vF < -J.stopThreshold) aF = J.brake; else vF = 0;
+  } else if (throttle > 0 && vF >= -J.stopThreshold) {
+    const f = Math.max(0, vF) / J.maxSpeed;                  // power fades to nothing at top speed
+    aF = throttle * J.accel * (1 - f * f);
+  } else if (throttle < 0 && vF > J.stopThreshold) {
+    aF = throttle * J.brake;                                 // braking while rolling forward
+  } else if (throttle < 0) {
+    const f = Math.abs(vF) / (J.reverseCap * J.maxSpeed);
+    aF = throttle * J.accel * .5 * Math.max(0, 1 - f * f);   // reverse tops out at reverseCap of max speed
+  } else if (throttle > 0) {
+    aF = throttle * J.brake;                                 // braking while rolling backward
+  }
+  // Handbrake (Shift): drags the rears and kills the last creep outright.
+  if (input.handbrake) {
+    if (vF > J.handbrakeCreep) aF -= J.brake * J.handbrakeBrake;
+    else if (vF < -J.handbrakeCreep) aF += J.brake * J.handbrakeBrake;
+    else vF = 0;
+  }
+  // Downhill governor (kept from classic): gravity on the ramp, not the motor, is what exceeds the limit.
+  if (Math.abs(vF) > J.maxSpeed * J.governor) aF -= Math.sign(vF) * J.brake;
+  // Drag, always.
+  aF -= vF * J.rollingDrag + Math.sign(vF) * vF * vF * J.quadDrag;
+  vF += aF * dt;
+
+  // Lateral grip: the tires scrub sideways velocity away, unless they let go.
+  const slipping = input.handbrake || Math.abs(vL) > J.slipThreshold;
+  vL *= Math.max(0, 1 - (slipping ? J.driftGrip : J.grip) * dt);
+
+  // Yaw: bicycle model, with rotational inertia once the back steps out. Only the component about the
+  // contact normal is written; pitch and roll rates stay Rapier's (suspension, ramp transitions, landings).
+  const yawTarget = vF / J.wheelbase * Math.tan(car.steering);
+  const w = body.angvel();
+  const wN = w.x * nx + w.y * ny + w.z * nz;
+  const yawRate = slipping ? wN + (yawTarget - wN) * Math.min(J.yawEase * dt, 1) : yawTarget;
+  body.setAngvel({ x: w.x + (yawRate - wN) * nx, y: w.y + (yawRate - wN) * ny, z: w.z + (yawRate - wN) * nz }, true);
+  body.setLinvel({ x: vF * fx + vL * rx + vN * nx, y: vF * fy + vL * ry + vN * ny, z: vF * fz + vL * rz + vN * nz }, true);
+
+  car.vF = vF; car.vL = vL; car.aF = aF; car.yawRate = yawRate; car.slipping = slipping;
+  car.brakeLight = ((throttle < 0 && vF > J.stopThreshold) || input.brake || input.handbrake) ? 1 : (vF < -J.handbrakeCreep ? 2 : 0);
+  // Visual only: the body squats under power and leans out of a corner.
+  car.visPitch = clamp(car.visPitch + (aF * J.visPitchPerAccel - car.visPitch) * kv, -J.visClamp, J.visClamp);
+  car.visRoll = clamp(car.visRoll + (-yawRate * vF * J.visRollPerAccel - car.visRoll) * kv, -J.visClamp, J.visClamp);
 }
 
 export function resetCar(car, spawn) {
@@ -147,6 +318,7 @@ export function resetCar(car, spawn) {
   car.body.resetTorques(true);
   car.steering = 0;
   car.upsideDown = 0;
+  Object.assign(car, { vF: 0, vL: 0, aF: 0, yawRate: 0, contacts: 0, airborne: false, slipping: false, brakeLight: 0, visPitch: 0, visRoll: 0 });
   for (let i = 0; i < 4; i++) {
     car.controller.setWheelSteering(i, 0);
     car.controller.setWheelEngineForce(i, 0);
@@ -176,7 +348,7 @@ export function wheelContacts(car) {
 export const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
 export function carState(car) {
   const p = car.body.translation(), q = car.body.rotation();
-  return { x: p.x, y: p.y, z: p.z, heading: heading(q), fwd: forwardSpeed(car), up: upVector(q).y };
+  return { x: p.x, y: p.y, z: p.z, heading: heading(q), fwd: forwardSpeed(car), vL: lateralSpeed(car), up: upVector(q).y };
 }
 // Ramp/desk geometry from a room module (RAMP export) or, failing that, from the ramp entry itself.
 export function rampGeometry(ROOM, mod = {}) {
@@ -193,15 +365,18 @@ export function rampGeometry(ROOM, mod = {}) {
   };
 }
 // Steer to hold `target` heading while pulling onto the line through `line` (a point) perpendicular to travel.
-// Stanley-style: aim at the target heading plus a bounded correction toward the line (max ~50°).
-export function steerTo(s, target, line, gain = 3, lateralGain = 4) {
+// Stanley-style: aim at the target heading plus a bounded correction toward the line (max ~50°), then
+// counter-steer against the measured slip angle (velocity direction vs heading) so a sliding car is steered
+// toward where it is actually going instead of deeper into the slide. The slip term is ~0 for a gripping car.
+export function steerTo(s, target, line, gain = 3, lateralGain = 4, slipGain = 1.5) {
   let desired = target;
   if (line) {
     const left = { x: Math.cos(target), z: -Math.sin(target) }; // up × forward of the target heading
     const offset = ((line.x ?? s.x) - s.x) * left.x + ((line.z ?? s.z) - s.z) * left.z; // + means the line is to the left
     desired += clamp(Math.atan(lateralGain * offset), -.9, .9);
   }
-  return clamp(gain * wrap(desired - s.heading), -1, 1);
+  const slip = Math.abs(s.fwd) > .1 ? Math.atan2(s.vL ?? 0, Math.abs(s.fwd)) : 0;
+  return clamp(gain * wrap(desired - s.heading) + slipGain * slip, -1, 1);
 }
 export const creep = (s, vmax = .5) => (s.fwd > vmax ? 0 : 1);
 const E = Math.PI / 2, W = -Math.PI / 2, N = Math.PI, S = 0; // headings: +X, -X, -Z, +Z
