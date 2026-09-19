@@ -4,19 +4,14 @@
 //
 //   import { mountMenu } from './menu.js';
 //   const menu = mountMenu({ statusEl, onChange(open) });  // shows at once, before the engine boots
-//   menu.setReady({ name, boxes, props, size });          // flips DRIVE from "Loading" to ready
+//   menu.setReady();      // flips DRIVE from "Loading" to ready once the world exists
 //   menu.isOpen();        // engine: keep physics paused and run the cinematic camera while true
 //   menu.open(); menu.close({ force });
 //
-// Pages: Start · Create (photos + API key → map) · Phases · Briefing.
-// Keys while open: ← → pages · Enter primary action · Esc back / resume · M music · F fullscreen.
+// Keys while open: ← → slides · Enter primary action · Esc back / resume · M music · F fullscreen.
 // In game: Esc reopens the menu (pause). M still toggles music.
-// URL: ?menu=create|phases|briefing opens on that page · ?map=<id> drives a saved map · ?go=1 skips the menu once ready.
 
-import { generateMap, saveMap, listMaps, deleteMap, MODELS, KEY_STORE } from './maps.js';
-import { drawOverview } from './minimap.js';
-
-const SLIDES = ['home', 'create', 'phases', 'briefing'];
+const SLIDES = ['home', 'phases', 'briefing'];
 const MUSIC_KEY = 'stm.music';
 const MENU_VOL = 0.5, GAME_VOL = 0.16;
 const here = new URL('.', import.meta.url);
@@ -36,17 +31,12 @@ const I = {
   arrR: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
   full: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg>',
   reload: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg>',
-  camera: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6H8l1.5-2h5L16 6h1.5A2.5 2.5 0 0 1 20 8.5V17a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17z"/><circle cx="12" cy="12.5" r="3.5"/></svg>',
-  spark: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg>',
-  eye: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
-  x: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
-  trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>',
+  flag: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 21V4M5 4h11l-1.5 3L16 10H5"/></svg>',
 };
 
 const keycap = (label, cls = '') => `<span class="stm-key ${cls}">${label}</span>`;
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-function template({ fallback, demoHref, fallbackHref, mapName }) {
+function template({ fallback, demoHref, fallbackHref }) {
   return `
   <div class="stm-ink"></div>
   <canvas class="stm-bg" aria-hidden="true"></canvas>
@@ -54,7 +44,7 @@ function template({ fallback, demoHref, fallbackHref, mapName }) {
   <div class="stm-scrim"></div><div class="stm-vignette"></div>
 
   <div class="stm-chrome">
-    <div class="stm-brand"><i class="stm-flag"></i><b>Snap the Room</b><span class="stm-chip" data-chip><i></i><span data-chip-text>Map · ${esc(mapName)}</span></span></div>
+    <div class="stm-brand"><i class="stm-flag"></i><b>Snap the Room</b><span class="stm-chip" data-chip><i></i><span data-chip-text>Phase 1 · Build Day Delhi</span></span></div>
     <div class="stm-tools">
       <button class="stm-icon" data-music aria-pressed="true" title="Music (M)"><span class="stm-eq"><i></i><i></i><i></i><i></i></span><span>Music</span></button>
       <button class="stm-icon" data-full title="Fullscreen (F)">${I.full}<span>Fullscreen</span></button>
@@ -67,19 +57,18 @@ function template({ fallback, demoHref, fallbackHref, mapName }) {
       <section class="stm-slide stm-home" data-slide="home" aria-label="Start">
         <div class="stm-hero">
           <div class="stm-stripes rv" style="--i:0"><i></i><i></i><i></i></div>
-          <p class="stm-kicker rv" style="--i:1">Photos in · a drivable world out</p>
+          <p class="stm-kicker rv" style="--i:1">A mouse-sized RC car · an office-sized playground</p>
           <h1 class="stm-title">
             <span class="w1 rv" style="--i:2">Snap</span>
             <span class="w2 rv" style="--i:3" data-text="the Room">the Room</span>
           </h1>
-          <p class="stm-tag rv" style="--i:4">Drop in <b>5 to 10 photos</b> of any room. Claude reads the space, lays out every desk, chair and wall in real meters, and puts a <b>mouse-sized RC car</b> on the floor. This office is the first map. Yours is one page away.</p>
+          <p class="stm-tag rv" style="--i:4">Thread the carpet aisle, climb the <b>17° ramp</b> onto a real desk, turn through the divider gap and come back down to <b>scatter the cups</b>. Phase 1 is live. Phases 2 and 3 are on the grid.</p>
           <div class="stm-actions">
             <button class="stm-btn primary is-loading rv" style="--i:5" data-primary>${I.go}<span data-primary-label>Loading</span><span class="k">Enter</span></button>
             <div class="stm-status rv" style="--i:6" data-status><i></i><span data-status-text>Starting the room and car</span></div>
             <div class="row rv" style="--i:7">
-              <button class="stm-btn" data-go="create">${I.camera}<span>Create map</span><span class="k">→</span></button>
-              <button class="stm-btn" data-go="phases">${I.grid}<span>Phases</span></button>
-              <button class="stm-btn" data-go="briefing">${I.book}<span>Briefing</span></button>
+              <button class="stm-btn" data-go="phases">${I.grid}<span>Phases</span><span class="k">→</span></button>
+              <button class="stm-btn" data-go="briefing">${I.book}<span>Briefing</span><span class="k">→</span></button>
             </div>
             <div class="row rv" style="--i:8">
               <a class="stm-btn ghost" href="${demoHref}">${I.go}<span>Demo lap</span></a>
@@ -90,104 +79,54 @@ function template({ fallback, demoHref, fallbackHref, mapName }) {
         </div>
         <aside class="stm-side">
           <div class="stm-card stm-spec rv" style="--i:4">
-            <h3>The map</h3>
+            <h3>The car</h3>
             <dl>
-              <dt>Name</dt><dd data-m-name>${esc(mapName)}</dd>
-              <dt>Boxes</dt><dd data-m-boxes>—</dd>
-              <dt>Props to scatter</dt><dd data-m-props>—</dd>
-              <dt>Footprint</dt><dd data-m-size>—</dd>
-              <dt>Car</dt><dd>1:36<small>120 mm · 150 g</small></dd>
+              <dt>Scale</dt><dd>1:36</dd>
+              <dt>Body length</dt><dd>120<small>mm</small></dd>
+              <dt>Mass</dt><dd>150<small>g</small></dd>
+              <dt>Drive</dt><dd>Rear<small>wheel</small></dd>
+              <dt>Top speed</dt><dd>1.2<small>m/s</small></dd>
+              <dt>Desk height</dt><dd>6.25<small>car lengths</small></dd>
             </dl>
           </div>
         </aside>
       </section>
 
-      <section class="stm-slide stm-create" data-slide="create" aria-label="Create a map">
-        <div class="stm-head">
-          <h2 class="stm-h2 rv" style="--i:0">Create <em>your map</em></h2>
-          <p class="stm-sub rv" style="--i:1">Walk the room, take 5 to 10 photos from different corners, drop them here. Claude measures the space and lays out every surface for the car. Your key goes straight from this browser to api.anthropic.com and nowhere else.</p>
-        </div>
-        <div class="stm-cols">
-          <div class="stm-card rv" style="--i:2">
-            <h3 class="t">Photos</h3>
-            <label class="stm-drop" data-drop tabindex="0">
-              <input type="file" accept="image/*" multiple data-files>
-              <span class="stm-chip count" data-count>0 / 10</span>
-              <div>${I.camera}<h3>Drop photos here</h3><p>JPEG or PNG, wide shots beat close-ups. iPhone HEIC needs exporting first. Click or drag and drop.</p></div>
-            </label>
-            <div class="stm-thumbs" data-thumbs></div>
-          </div>
-          <div class="stm-card rv" style="--i:3">
-            <h3 class="t">Generate</h3>
-            <form class="stm-form" data-form novalidate>
-              <div class="two">
-                <div class="stm-field"><label for="stm-name">Map name</label><input class="stm-input" id="stm-name" data-name placeholder="Studio, kitchen, our office…" maxlength="40" autocomplete="off"></div>
-                <div class="stm-field"><label for="stm-model">Model</label><select class="stm-input" id="stm-model" data-model>${MODELS.map(m => `<option value="${m.id}">${esc(m.label)}</option>`).join('')}</select></div>
-              </div>
-              <div class="two">
-                <div class="stm-field"><label for="stm-w">Width · m <span>optional</span></label><input class="stm-input" id="stm-w" data-w type="number" min="1" max="60" step="0.1" placeholder="estimate"></div>
-                <div class="stm-field"><label for="stm-d">Depth · m <span>optional</span></label><input class="stm-input" id="stm-d" data-d type="number" min="1" max="60" step="0.1" placeholder="estimate"></div>
-              </div>
-              <div class="stm-field">
-                <label for="stm-key">Anthropic API key <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">get a key ↗</a></label>
-                <div class="stm-keywrap"><input class="stm-input" id="stm-key" data-key type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false"><button type="button" class="stm-eye" data-eye title="Show key">${I.eye}</button></div>
-                <label class="stm-check"><input type="checkbox" data-remember> Remember the key on this device</label>
-              </div>
-              <div class="row">
-                <button type="submit" class="stm-btn primary" data-generate>${I.spark}<span data-generate-label>Generate map</span></button>
-                <button type="button" class="stm-btn ghost" data-cancel hidden>${I.x}<span>Cancel</span></button>
-              </div>
-              <div class="stm-log" data-log hidden></div>
-            </form>
-            <div class="stm-result" data-result hidden>
-              <canvas width="420" height="316"></canvas>
-              <div>
-                <h4 data-r-name>Map</h4>
-                <div class="stats"><div><b data-r-boxes>0</b><span>boxes</span></div><div><b data-r-props>0</b><span>props</span></div><div><b data-r-size>—</b><span>footprint</span></div><div><b data-r-tokens>—</b><span>tokens</span></div></div>
-                <div class="row"><a class="stm-btn primary" data-r-drive>${I.go}<span>Drive this map</span></a><button type="button" class="stm-btn ghost" data-r-again>${I.reload}<span>Again</span></button></div>
-                <p class="stm-note" data-r-warn></p>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="stm-card rv" style="--i:4"><h3 class="t">Your maps</h3><div class="stm-maps" data-maps></div></div>
-      </section>
-
       <section class="stm-slide stm-phases" data-slide="phases" aria-label="Phases">
         <div class="stm-head">
-          <h2 class="stm-h2 rv" style="--i:0">From photos to <em>a world</em></h2>
-          <p class="stm-sub rv" style="--i:1">Three layers. Drive a generated room, generate your own from photos, then let the simulation improve the map by itself.</p>
+          <h2 class="stm-h2 rv" style="--i:0">Pick your <em>phase</em></h2>
+          <p class="stm-sub rv" style="--i:1">One route, built in layers. Phase 1 is the rehearsed floor-to-desk run. The next two unlock as the car earns them.</p>
         </div>
         <div class="stm-grid">
           <article class="stm-card stm-phase ready rv" style="--i:2">
             <span class="num">01</span>
             <div class="head"><span class="label">Phase 1</span><span class="stm-badge ready" data-p1-badge>${I.check} Ready</span></div>
             <div>
-              <h3>Drive</h3>
-              <p>A generated room you can drive right now: life-size boxes, a 1:36 RC car, a ramp you can climb and clutter you can scatter.</p>
-              <ul><li>Rapier vehicle physics at 60 Hz</li><li>Minimap and speedometer HUD</li><li>Recovery, pause menu, demo lap</li></ul>
+              <h3>The Climb</h3>
+              <p>Spawn on the carpet, drive the aisle, climb onto the desktop, turn through the divider gap and drop back down onto the cups.</p>
+              <ul><li>Life-size office, 1:36 car</li><li>17° bench-end ramp, both directions</li><li>Twelve lightweight props to scatter</li><li>R recovers, Esc pauses</li></ul>
             </div>
-            <div class="foot"><span class="eta">Live</span><button class="stm-btn" data-drive>${I.go}<span>Drive</span></button></div>
+            <div class="foot"><span class="eta">Rehearsed route</span><button class="stm-btn" data-drive>${I.go}<span>Drive</span></button></div>
           </article>
-          <article class="stm-card stm-phase ready rv" style="--i:3">
+          <article class="stm-card stm-phase locked rv" style="--i:3">
             <span class="num">02</span>
-            <div class="head"><span class="label">Phase 2</span><span class="stm-badge beta">${I.camera} Beta</span></div>
+            <div class="head"><span class="label">Phase 2</span><span class="stm-badge locked">${I.lock} Locked</span></div>
             <div>
-              <h3>Create</h3>
-              <p>Your photos, your key, your map. Claude reads 5 to 10 shots and lays the room out for the car, right here in the browser.</p>
-              <ul><li>Strict layout schema, validated and repaired</li><li>Saved in this browser, drive any time</li><li>Claude Opus 5 or Sonnet 5</li></ul>
+              <h3>Time Attack</h3>
+              <p>The same route against the clock. Three collectibles light up along the way and a counter keeps score.</p>
+              <ul><li>Three reachable collectibles</li><li>Lap clock and best time</li><li>Ghost line of the rehearsed run</li></ul>
             </div>
-            <div class="foot"><span class="eta">Live now</span><button class="stm-btn" data-go="create">${I.camera}<span>Create</span></button></div>
+            <div class="foot"><span class="eta">After rehearsal</span><span class="stm-badge locked">Next up</span></div>
           </article>
           <article class="stm-card stm-phase locked rv" style="--i:4">
             <span class="num">03</span>
             <div class="head"><span class="label">Phase 3</span><span class="stm-badge locked">${I.lock} Locked</span></div>
             <div>
-              <h3>Iterate</h3>
-              <p>The simulation drives itself. It runs the route, finds snags and blocked corridors, and asks Claude to fix the map until the lap is clean.</p>
-              <ul><li>Autonomous test laps</li><li>Layout fixes from failures</li><li>A map that improves every run</li></ul>
+              <h3>Office Chaos</h3>
+              <p>Everything gets a mass. Arcade-weight chairs scatter, skid marks stay on the carpet, and the replay camera catches it all.</p>
+              <ul><li>Dynamic chairs and more clutter</li><li>Skid marks, dust and engine audio</li><li>Alternate cameras and slow motion</li></ul>
             </div>
-            <div class="foot"><span class="eta">Next</span><span class="stm-badge locked">Soon</span></div>
+            <div class="foot"><span class="eta">Hour three</span><span class="stm-badge locked">Stretch</span></div>
           </article>
         </div>
       </section>
@@ -195,7 +134,7 @@ function template({ fallback, demoHref, fallbackHref, mapName }) {
       <section class="stm-slide stm-brief" data-slide="briefing" aria-label="Briefing">
         <div class="stm-head">
           <h2 class="stm-h2 rv" style="--i:0">Driver <em>briefing</em></h2>
-          <p class="stm-sub rv" style="--i:1">Keyboard only. Steady throttle on a slope, no steering on the ramp, and the desk is yours.</p>
+          <p class="stm-sub rv" style="--i:1">Keyboard only. Steady throttle on the slope, no steering on the ramp, and the desk is yours.</p>
         </div>
         <div class="stm-cols">
           <div class="stm-card rv" style="--i:2">
@@ -212,19 +151,20 @@ function template({ fallback, demoHref, fallbackHref, mapName }) {
             </div>
           </div>
           <div class="stm-card rv" style="--i:3">
-            <h3 class="t">The HUD</h3>
+            <h3 class="t">The route</h3>
             <div class="stm-route">
-              <div class="stm-step"><i>1</i><div><b>Minimap</b><span>Bottom left. The world turns around the car; N marks north, diamonds mark the ramp and the cups, dots are props.</span></div></div>
-              <div class="stm-step hot"><i>2</i><div><b>Speedometer</b><span>Bottom right. Scale speed in km/h: the 1:36 car at 1.2 m/s is doing 155. D, R, N and a red B when braking.</span></div></div>
-              <div class="stm-step"><i>3</i><div><b>Desk level</b><span>A tag on the minimap lights up when the car is up on a surface.</span></div></div>
-              <div class="stm-step"><i>4</i><div><b>Recovery</b><span>R puts the car back at spawn, heading and camera included. Reload restores every prop.</span></div></div>
+              <div class="stm-step"><i>1</i><div><b>Spawn</b><span>West end, on the olive accent run, facing east down the aisle.</span></div></div>
+              <div class="stm-step"><i>2</i><div><b>Aisle</b><span>Drive between the white desk runs. The divider gap pitch is chair-free if you want to pass under.</span></div></div>
+              <div class="stm-step hot"><i>3</i><div><b>Ramp</b><span>Back at spawn turn left, line up on the beige plate and climb with steady throttle. No steering on the slope.</span></div></div>
+              <div class="stm-step"><i>4</i><div><b>Desktop</b><span>Follow the lane east to the olive mat, turn through the gap or U-turn on the mat.</span></div></div>
+              <div class="stm-step"><i>5</i><div><b>Cups</b><span>Straight back down the ramp, left to the olive square, and scatter everything.</span></div></div>
             </div>
           </div>
         </div>
         <div class="stm-credits rv" style="--i:4">
           <span>Music: <a href="https://incompetech.com" target="_blank" rel="noopener">“Pamgaea” by Kevin MacLeod</a> (CC BY 4.0)</span><i class="dot"></i>
-          <span>Three.js 0.169 · Rapier 0.14 · Claude API</span><i class="dot"></i>
-          <span>Tanay &amp; Chirag</span>
+          <span>Three.js 0.169 · Rapier 0.14</span><i class="dot"></i>
+          <span>Claude Build Day Delhi · Tanay &amp; Chirag</span>
         </div>
       </section>
 
@@ -232,7 +172,7 @@ function template({ fallback, demoHref, fallbackHref, mapName }) {
   </div>
 
   <nav class="stm-nav" aria-label="Menu pages">
-    <span class="stm-build">Photos in · drivable world out</span>
+    <span class="stm-build">Snap the Room · v0.9 · Phase 1</span>
     <div class="stm-pager">
       <button class="stm-arrow" data-prev aria-label="Previous">${I.left}</button>
       <div class="stm-dots" role="tablist">${SLIDES.map((s, i) => `<button class="stm-dot" role="tab" data-dot="${i}" aria-label="${s}" aria-current="${i === 0}"></button>`).join('')}</div>
@@ -272,10 +212,9 @@ function createSfx() {
     ensure,
     tick: () => blip(1500, 0.035, 0.035, 'sine', 0.85),
     confirm: () => { blip(620, 0.09, 0.09, 'triangle'); setTimeout(() => blip(930, 0.14, 0.09, 'triangle'), 70); },
-    success: () => { blip(520, 0.1, 0.08, 'triangle'); setTimeout(() => blip(780, 0.1, 0.08, 'triangle'), 90); setTimeout(() => blip(1040, 0.18, 0.08, 'triangle'), 180); },
     back: () => blip(520, 0.1, 0.07, 'triangle', 0.7),
-    error: () => blip(220, 0.25, 0.08, 'sawtooth', 0.6),
     whoosh,
+    context: () => ctx,
   };
 }
 
@@ -332,7 +271,11 @@ function createMusic(sfx, button, showToast) {
     raf = requestAnimationFrame(tick);
   }
   function render() { button.setAttribute('aria-pressed', String(enabled)); button.title = enabled ? 'Music on (M)' : 'Music off (M)'; }
-  function unlock() { if (unlocked) return; unlocked = true; if (enabled) fadeTo(wanted); }
+  function unlock() {
+    if (unlocked) return; unlocked = true;
+    if (enabled) fadeTo(wanted);
+  }
+  // Autoplay may already be allowed (engaged origin). Try quietly; otherwise wait for the first gesture.
   audio.play().then(() => { unlocked = true; if (enabled) fadeTo(wanted); else audio.pause(); })
     .catch(() => { if (enabled) showToast('Click or press a key for sound'); });
   render();
@@ -365,9 +308,11 @@ function createBackdrop(canvas) {
     const t = now / 1000;
     ctx.clearRect(0, 0, w, h);
     const horizon = h * 0.56, vpx = w * 0.66, dim = scene ? 0.6 : 1;
+    // horizon glow band
     const band = ctx.createLinearGradient(0, horizon - 60, 0, horizon + 90);
     band.addColorStop(0, 'rgba(255,120,40,0)'); band.addColorStop(0.5, `rgba(255,130,50,${0.16 * dim})`); band.addColorStop(1, 'rgba(255,120,40,0)');
     ctx.fillStyle = band; ctx.fillRect(0, horizon - 60, w, 150);
+    // rows sliding toward the viewer
     const rows = 20, scroll = (t * 0.32) % 1;
     ctx.lineWidth = 1;
     for (let k = 0; k < rows; k++) {
@@ -376,11 +321,13 @@ function createBackdrop(canvas) {
       ctx.strokeStyle = `rgba(255,140,60,${(0.04 + d ** 1.3 * 0.3) * dim})`;
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
     }
+    // converging columns
     for (let i = -16; i <= 16; i++) {
       const g = ctx.createLinearGradient(0, horizon, 0, h);
       g.addColorStop(0, 'rgba(255,140,60,0)'); g.addColorStop(1, `rgba(255,140,60,${0.26 * dim})`);
       ctx.strokeStyle = g; ctx.beginPath(); ctx.moveTo(vpx, horizon); ctx.lineTo(vpx + i * w * 0.115, h); ctx.stroke();
     }
+    // speed streaks, right to left
     ctx.lineWidth = 1.5;
     for (const s of streaks) {
       s.x -= s.sp * dt * 1.6;
@@ -402,20 +349,19 @@ function createBackdrop(canvas) {
 export function mountMenu({ statusEl = null, onChange = () => {} } = {}) {
   const params = new URLSearchParams(location.search);
   const fallback = params.has('fallback');
-  const currentMapId = params.get('map') || '';
-  const currentMap = currentMapId ? listMaps().find(m => m.id === currentMapId) : null;
-  const mapName = currentMap?.name || (fallback ? 'Simple room' : 'The Office');
-  const withParams = (changes) => { const p = new URLSearchParams(location.search); for (const [k, v] of Object.entries(changes)) { if (v === null) p.delete(k); else p.set(k, v); } const q = p.toString(); return location.pathname + (q ? `?${q}` : ''); };
+  const withParam = (key, value) => { const p = new URLSearchParams(location.search); if (value === null) p.delete(key); else p.set(key, value); const q = p.toString(); return location.pathname + (q ? `?${q}` : ''); };
 
+  // Styles and fonts. The root stays hidden until the stylesheet is in, so there is no unstyled flash.
   if (!document.querySelector('link[data-stm-fonts]')) {
     for (const [rel, href, extra] of [
       ['preconnect', 'https://fonts.googleapis.com'], ['preconnect', 'https://fonts.gstatic.com', 'anonymous'],
-      ['stylesheet', 'https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,700;0,800;1,700;1,800;1,900&family=Barlow:wght@500;600;700;800&display=swap'],
+      ['stylesheet', 'https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,700;0,800;1,700;1,800;1,900&family=Barlow:wght@500;600;700&display=swap'],
     ]) { const l = document.createElement('link'); l.rel = rel; l.href = href; if (extra) l.crossOrigin = extra; l.dataset.stmFonts = ''; document.head.append(l); }
   }
   const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = new URL('./menu.css', here).href;
   document.head.append(css);
   if (!document.querySelector('link[rel~="icon"]')) {
+    // Tab icon: a skewed orange tile with a checkered corner, matching the brand flag.
     const icon = document.createElement('link'); icon.rel = 'icon'; icon.type = 'image/svg+xml';
     icon.href = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff8a1f"/><stop offset="1" stop-color="#ff2d78"/></linearGradient></defs><path d="M14 4h46l-10 56H4z" fill="url(#g)"/><path d="M26 16h8v8h-8zM34 24h8v8h-8zM26 32h8v8h-8zM34 40h8v8h-8zM18 24h8v8h-8zM18 40h8v8h-8z" fill="#fff" fill-opacity=".92"/></svg>');
     document.head.append(icon);
@@ -424,11 +370,7 @@ export function mountMenu({ statusEl = null, onChange = () => {} } = {}) {
   const root = document.createElement('div');
   root.className = 'stm'; root.hidden = true; root.dataset.slide = 'home';
   root.setAttribute('role', 'dialog'); root.setAttribute('aria-modal', 'true'); root.setAttribute('aria-label', 'Snap the Room menu');
-  root.innerHTML = template({
-    fallback, mapName,
-    demoHref: withParams({ demo: '1', menu: null, go: null }),
-    fallbackHref: fallback ? withParams({ fallback: null, map: null, menu: null, go: null }) : withParams({ fallback: '1', map: null, menu: null, go: null }),
-  });
+  root.innerHTML = template({ fallback, demoHref: withParam('demo', '1'), fallbackHref: fallback ? withParam('fallback', null) : withParam('fallback', '1') });
   document.body.append(root);
   document.body.classList.add('stm-open');
   const reveal = () => { root.hidden = false; };
@@ -440,7 +382,7 @@ export function mountMenu({ statusEl = null, onChange = () => {} } = {}) {
   const status = $('[data-status]'), statusText = $('[data-status-text]');
   const chip = $('[data-chip]'), chipText = $('[data-chip-text]');
   const toast = $('[data-toast]'), toastText = $('[data-toast-text]');
-  const restart = $('[data-restart]'), driveCard = $('[data-drive]');
+  const restart = $('[data-restart]'), p1badge = $('[data-p1-badge]'), driveCard = $('[data-drive]');
 
   const sfx = createSfx();
   let toastTimer = 0;
@@ -458,10 +400,9 @@ export function mountMenu({ statusEl = null, onChange = () => {} } = {}) {
     slides.forEach((s, k) => { s.classList.toggle('is-active', k === i); if (k === i) s.removeAttribute('inert'); else s.setAttribute('inert', ''); });
     dots.forEach((d, k) => d.setAttribute('aria-current', String(k === i)));
     $('[data-prev]').disabled = i === 0; $('[data-next]').disabled = i === SLIDES.length - 1;
-    sfx.whoosh(dir > 0 ? 1 : -1);
-    const focus = slides[i].querySelector(i === 0 ? '[data-primary]' : i === 1 ? '[data-drop]' : 'button, a');
+    if (dir > 0) sfx.whoosh(1); else sfx.whoosh(-1);
+    const focus = slides[i].querySelector(i === 0 ? '[data-primary]' : 'button, a');
     focus?.focus({ preventScroll: true });
-    slides[i].scrollTop = 0;
   }
   function setStatus(text) { statusText.textContent = text; }
 
@@ -470,7 +411,7 @@ export function mountMenu({ statusEl = null, onChange = () => {} } = {}) {
     open = true; clearTimeout(closing);
     root.hidden = false; root.classList.remove('is-closing');
     document.body.classList.add('stm-open');
-    chip.classList.toggle('paused', started); chipText.textContent = started ? 'Paused' : `Map · ${mapName}`;
+    chip.classList.toggle('paused', started); chipText.textContent = started ? 'Paused' : 'Phase 1 · Build Day Delhi';
     primaryLabel.textContent = started ? 'Resume' : 'Drive';
     if (started) setStatus('Paused · Enter resumes · Esc closes');
     restart.hidden = !started;
@@ -501,17 +442,15 @@ export function mountMenu({ statusEl = null, onChange = () => {} } = {}) {
   $('[data-music]').addEventListener('click', () => music.toggle());
   $('[data-full]').addEventListener('click', () => { if (document.fullscreenElement) document.exitFullscreen?.(); else document.documentElement.requestFullscreen?.().catch(() => {}); });
   $$('button, a, .stm-phase').forEach(el => el.addEventListener('pointerenter', () => sfx.tick()));
-  root.addEventListener('click', e => { if (e.target.closest?.('button, a') && !e.target.closest('[data-primary], [data-drive], [data-generate]')) sfx.tick(); });
+  root.addEventListener('click', e => { if (e.target.closest?.('button, a') && !e.target.closest('[data-primary], [data-drive]')) sfx.tick(); });
 
+  // First gesture anywhere unlocks audio (autoplay policy).
   const unlock = () => { sfx.ensure(); music.unlock(); toast.classList.remove('show'); };
   addEventListener('pointerdown', unlock, { passive: true });
   addEventListener('keydown', unlock);
 
   addEventListener('keydown', e => {
-    if (e.target.closest?.('input, textarea, select')) {
-      if (e.code !== 'Escape' || !open) return; // typing: leave arrows and Enter to the field
-      e.target.blur(); // Escape leaves the field and falls through to the normal back behaviour
-    }
+    if (e.target.closest?.('input, textarea')) return;
     if (e.code === 'KeyM' && !e.repeat) { music.toggle(); return; }
     if (!open) {
       if (e.code === 'Escape' && started) { e.preventDefault(); doOpen(); }
@@ -521,7 +460,7 @@ export function mountMenu({ statusEl = null, onChange = () => {} } = {}) {
       case 'ArrowRight': e.preventDefault(); go(index + 1); break;
       case 'ArrowLeft': e.preventDefault(); go(index - 1); break;
       case 'Enter': case 'NumpadEnter':
-        if (e.target.closest?.('button, a, label')) return;
+        if (e.target.closest?.('button, a')) return; // native activation
         e.preventDefault(); if (index === 0) primaryAction(); else go(0); break;
       case 'Escape':
         e.preventDefault();
@@ -531,125 +470,17 @@ export function mountMenu({ statusEl = null, onChange = () => {} } = {}) {
     }
   }, true);
 
+  // Mirror the engine's loading text under the DRIVE button without touching the engine.
   if (statusEl) {
     const sync = () => { if (!ready) setStatus(statusEl.textContent.replace(/[.…]+$/, '')); };
     new MutationObserver(sync).observe(statusEl, { childList: true, characterData: true, subtree: true });
     sync();
   }
 
-  // ---------- create page ----------
-  const photos = []; // { file, url }
-  const drop = $('[data-drop]'), files = $('[data-files]'), thumbs = $('[data-thumbs]'), count = $('[data-count]');
-  const form = $('[data-form]'), nameIn = $('[data-name]'), modelIn = $('[data-model]'), wIn = $('[data-w]'), dIn = $('[data-d]');
-  const keyIn = $('[data-key]'), remember = $('[data-remember]'), generate = $('[data-generate]'), generateLabel = $('[data-generate-label]'), cancel = $('[data-cancel]');
-  const log = $('[data-log]'), result = $('[data-result]'), mapsEl = $('[data-maps]');
-  const savedKey = localStorage.getItem(KEY_STORE);
-  if (savedKey) { keyIn.value = savedKey; remember.checked = true; }
-  nameIn.value = `Room ${listMaps().length + 1}`;
-  let controller = null;
-
-  function renderPhotos() {
-    thumbs.innerHTML = photos.map((p, i) => `<div class="stm-thumb"><img src="${p.url}" alt=""><span class="n">${i + 1}</span><button type="button" class="stm-x rm" data-rm="${i}" title="Remove">${I.x}</button></div>`).join('');
-    count.textContent = `${photos.length} / 10`;
-    thumbs.querySelectorAll('[data-rm]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); const i = Number(b.dataset.rm); URL.revokeObjectURL(photos[i].url); photos.splice(i, 1); renderPhotos(); }));
-  }
-  function addFiles(list) {
-    let added = 0;
-    for (const f of list) {
-      if (!f.type.startsWith('image/') && !/\.(heic|heif)$/i.test(f.name)) continue;
-      if (photos.length >= 10) { showToast('Ten photos is plenty'); break; }
-      photos.push({ file: f, url: URL.createObjectURL(f) }); added++;
-    }
-    if (added) renderPhotos(); else showToast('Drop image files');
-  }
-  files.addEventListener('change', () => { addFiles(files.files); files.value = ''; });
-  for (const ev of ['dragenter', 'dragover']) drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); });
-  for (const ev of ['dragleave', 'drop']) drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); });
-  drop.addEventListener('drop', e => addFiles(e.dataTransfer.files));
-  drop.addEventListener('keydown', e => { if (e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); files.click(); } });
-  $('[data-eye]').addEventListener('click', () => { keyIn.type = keyIn.type === 'password' ? 'text' : 'password'; });
-
-  function logReset() { log.innerHTML = ''; log.hidden = false; }
-  let lastStep = null;
-  function logStep(text) {
-    if (lastStep) lastStep.classList.add('done');
-    lastStep = document.createElement('div'); lastStep.className = 'step'; lastStep.innerHTML = `<i></i><span>${esc(text)}</span>`; log.append(lastStep);
-    thought.hidden = true; log.append(thought);
-  }
-  const thought = document.createElement('div'); thought.className = 'thought'; thought.hidden = true;
-  function logThought(text) { thought.textContent = text; thought.hidden = false; }
-  function logError(text) { if (lastStep) lastStep.classList.add('err'); const d = document.createElement('div'); d.className = 'step err'; d.innerHTML = `<i></i><span>${esc(text)}</span>`; log.append(d); thought.hidden = true; }
-
-  function renderMaps() {
-    const saved = listMaps();
-    const builtin = [
-      { id: '', name: 'The Office', note: 'Built in · 646 boxes · 12 props', href: withParams({ map: null, fallback: null, menu: null, go: null }), current: !currentMapId && !fallback },
-      { id: 'fallback', name: 'Simple room', note: 'Built in · tested fallback', href: withParams({ map: null, fallback: '1', menu: null, go: null }), current: !currentMapId && fallback },
-    ];
-    mapsEl.innerHTML = [
-      ...builtin.map(m => `<div class="stm-maprow${m.current ? ' current' : ''}"><div><b>${esc(m.name)}</b><small>${esc(m.note)}</small></div><a class="stm-btn ghost" href="${m.href}">${I.go}<span>${m.current ? 'Loaded' : 'Load'}</span></a><span></span></div>`),
-      ...saved.map(m => `<div class="stm-maprow${m.id === currentMapId ? ' current' : ''}"><div><b>${esc(m.name)}</b><small>${m.counts?.boxes ?? '?'} boxes · ${m.counts?.props ?? 0} props · ${new Date(m.createdAt).toLocaleDateString()}${m.model ? ' · ' + esc(m.model.replace('claude-', '')) : ''}</small></div><a class="stm-btn ghost" href="${withParams({ map: m.id, fallback: null, menu: null, go: null })}">${I.go}<span>${m.id === currentMapId ? 'Loaded' : 'Load'}</span></a><button type="button" class="stm-x" data-del="${m.id}" title="Delete">${I.trash}</button></div>`),
-    ].join('');
-    mapsEl.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', () => { deleteMap(b.dataset.del); renderMaps(); showToast('Map deleted'); }));
-    if (!saved.length) mapsEl.insertAdjacentHTML('beforeend', '<p class="stm-note">Maps you generate are saved in this browser and listed here.</p>');
-  }
-  renderMaps();
-
-  function setBusy(busy) {
-    generate.disabled = busy; generate.classList.toggle('is-loading', busy);
-    generateLabel.textContent = busy ? 'Generating' : 'Generate map';
-    cancel.hidden = !busy;
-    [nameIn, modelIn, wIn, dIn, keyIn, remember, files].forEach(el => { el.disabled = busy; });
-  }
-  cancel.addEventListener('click', () => controller?.abort());
-
-  form.addEventListener('submit', async e => {
-    e.preventDefault();
-    const apiKey = keyIn.value.trim();
-    result.hidden = true; logReset(); lastStep = null;
-    if (!photos.length) { logError('Add at least one photo of the room. Five to ten from different corners works best.'); sfx.error(); return; }
-    if (!apiKey) { logError('Paste your Anthropic API key. It is sent only to api.anthropic.com from this browser.'); sfx.error(); keyIn.focus(); return; }
-    if (remember.checked) localStorage.setItem(KEY_STORE, apiKey); else localStorage.removeItem(KEY_STORE);
-    if (photos.length < 5) showToast(`${photos.length} photo${photos.length === 1 ? '' : 's'} · five or more gives a better layout`, 3200);
-    const w = Number(wIn.value), d = Number(dIn.value);
-    const size = w > 0 && d > 0 ? [w, d] : null;
-    controller = new AbortController();
-    setBusy(true);
-    const t0 = performance.now();
-    const meta = document.createElement('div'); meta.className = 'meta';
-    const tickTimer = setInterval(() => { meta.textContent = `${Math.round((performance.now() - t0) / 1000)} s`; }, 1000);
-    log.append(meta);
-    try {
-      const { map, warnings, usage, model } = await generateMap({
-        files: photos.map(p => p.file), apiKey, model: modelIn.value, name: nameIn.value.trim() || 'My room', size, signal: controller.signal,
-        onStatus: s => { logStep(s); log.append(meta); }, onThought: logThought,
-      });
-      const id = saveMap(map, { model });
-      logStep(`Saved “${map.name}” in ${Math.round((performance.now() - t0) / 1000)} s`); lastStep.classList.add('done');
-      thought.hidden = true;
-      drawOverview(result.querySelector('canvas'), map.ROOM, map.PROPS, map.SPAWN);
-      $('[data-r-name]').textContent = map.name;
-      $('[data-r-boxes]').textContent = String(map.ROOM.length);
-      $('[data-r-props]').textContent = String(map.PROPS.length);
-      $('[data-r-size]').textContent = `${map.size[0].toFixed(1)} × ${map.size[1].toFixed(1)} m`;
-      $('[data-r-tokens]').textContent = usage ? `${Math.round(((usage.input_tokens || 0) + (usage.output_tokens || 0)) / 1000)}k` : '—';
-      $('[data-r-drive]').href = withParams({ map: id, fallback: null, menu: null, go: '1' });
-      $('[data-r-warn]').textContent = warnings.length ? `Fixed on the way in: ${warnings.join('; ')}.` : 'Clean layout, nothing had to be repaired.';
-      result.hidden = false;
-      renderMaps(); nameIn.value = `Room ${listMaps().length + 1}`;
-      sfx.success();
-      result.scrollIntoView({ block: 'nearest', behavior: reducedMotion ? 'auto' : 'smooth' });
-    } catch (error) {
-      logError(error.message || String(error)); sfx.error();
-    } finally {
-      clearInterval(tickTimer); setBusy(false); controller = null;
-    }
-  });
-  $('[data-r-again]').addEventListener('click', () => { result.hidden = true; form.requestSubmit(); });
-
   slides[0].classList.add('is-active'); slides.slice(1).forEach(s => s.setAttribute('inert', ''));
   $('[data-prev]').disabled = true;
   backdrop.start();
+  // ?menu=phases|briefing opens on that page (screenshots, deep links).
   const initial = SLIDES.indexOf(params.get('menu'));
   if (initial > 0) { slides[0].classList.remove('is-active'); go(initial); }
   else requestAnimationFrame(() => primary.focus({ preventScroll: true }));
@@ -658,17 +489,13 @@ export function mountMenu({ statusEl = null, onChange = () => {} } = {}) {
     open: doOpen,
     close: doClose,
     isOpen: () => open,
-    setReady(info = {}) {
+    setReady() {
       if (ready) return; ready = true;
       primary.classList.remove('is-loading'); primary.classList.add('is-ready');
       primaryLabel.textContent = started ? 'Resume' : 'Drive';
       status.classList.add('ready'); setStatus('Ready · press Enter to drive');
       root.classList.add('has-scene'); backdrop.setScene(true);
-      if (info.name) { $('[data-m-name]').textContent = info.name; if (!started) chipText.textContent = `Map · ${info.name}`; }
-      if (info.boxes != null) $('[data-m-boxes]').textContent = String(info.boxes);
-      if (info.props != null) $('[data-m-props]').textContent = String(info.props);
-      if (info.size) $('[data-m-size]').innerHTML = `${(+info.size[0]).toFixed(1)} × ${(+info.size[1]).toFixed(1)}<small>m</small>`;
-      if (params.has('go') && open) setTimeout(() => doClose(), 350);
+      p1badge.innerHTML = `${I.check} Ready`;
     },
     setStatus,
     music,
