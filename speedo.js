@@ -56,8 +56,10 @@ export function createSpeedo({ canvas, kmhEl, msEl, gearEl, scale = SPEEDO.scale
       const r1 = r - 13, r2 = r1 - (major ? 10 : 5);
       ctx.beginPath(); ctx.moveTo(c + Math.cos(a) * r1, c + Math.sin(a) * r1); ctx.lineTo(c + Math.cos(a) * r2, c + Math.sin(a) * r2);
       ctx.lineWidth = major ? 2.5 : 1.2; ctx.strokeStyle = k / 20 <= frac ? '#fff6e6' : 'rgba(255,246,230,.35)'; ctx.stroke();
-      if (major && k % 4 === 0) {
-        ctx.font = `700 ${Math.round(s * .052)}px var(--hud-font, system-ui), system-ui, sans-serif`;
+      // Tick numbers only when the face can hold them: on a small dial they run into the centre readout.
+      if (major && k % 4 === 0 && s >= 170) {
+        // A canvas font string is not CSS: var() never resolves here, so the HUD stack is written out.
+        ctx.font = `700 ${Math.round(s * .052)}px "Avenir Next Condensed", "Arial Narrow", system-ui, sans-serif`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = 'rgba(255,246,230,.55)';
         ctx.fillText(String(Math.round(k / 20 * maxKmh)), c + Math.cos(a) * (r2 - 13), c + Math.sin(a) * (r2 - 13));
       }

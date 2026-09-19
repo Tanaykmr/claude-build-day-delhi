@@ -29,15 +29,18 @@
     .hud-bc { position: absolute; left: 50%; bottom: 86px; transform: translateX(-50%); padding: 10px 22px; font-size: 21px; white-space: nowrap; text-shadow: var(--hud-shadow); }
     .hud-bl { position: absolute; left: 20px; bottom: 20px; padding: 9px 16px; font-size: 14px; letter-spacing: .06em; display: flex; gap: 14px; flex-wrap: wrap; max-width: calc(100vw - 280px); }
     /* Radial speedometer, ported from Chirag's hud.js/hud.css (origin/chirag). Reads scale km/h, not m/s. */
-    #speedo { position: absolute; right: 20px; bottom: 20px; width: 204px; height: 204px; }
+    /* Everything inside the dial is sized off --dial, so a tier only changes that one number and the type
+       cannot outgrow the face. Shrinking the canvas alone left the caption at full size and it collided with
+       the end tick labels at 760px. */
+    #speedo { --dial: 204px; position: absolute; right: 20px; bottom: 20px; width: var(--dial); height: var(--dial); }
     #speedo canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
     .speedo-digits { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-62%); text-align: center; }
-    .speedo-digits b { display: block; font: 900 52px/.9 var(--hud-font); font-style: italic; letter-spacing: -.02em; font-variant-numeric: tabular-nums; text-shadow: 0 2px 0 rgba(8,10,20,.45), 0 10px 26px rgba(255,199,44,.3); }
-    .speedo-digits small { display: block; margin-top: 5px; font-size: 9px; letter-spacing: .24em; opacity: .62; }
-    .speedo-gear { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; font: 900 21px/1 var(--hud-font); font-style: italic; color: var(--ink); background: linear-gradient(180deg, #26345a, #16203a); box-shadow: 0 1px 0 rgba(255,246,230,.16) inset, 0 -2px 0 rgba(8,10,20,.35) inset, 0 12px 22px -10px rgba(6,8,18,.9); transition: background 200ms ease-out, box-shadow 200ms ease-out; }
+    .speedo-digits b { display: block; font: 900 calc(var(--dial) * .255)/.9 var(--hud-font); font-style: italic; letter-spacing: -.02em; font-variant-numeric: tabular-nums; text-shadow: 0 2px 0 rgba(8,10,20,.45), 0 10px 26px rgba(255,199,44,.3); }
+    .speedo-digits small { display: block; margin-top: calc(var(--dial) * .025); font-size: calc(var(--dial) * .044); letter-spacing: .22em; opacity: .62; white-space: nowrap; }
+    .speedo-gear { position: absolute; left: 50%; bottom: calc(var(--dial) * .098); transform: translateX(-50%); width: calc(var(--dial) * .186); height: calc(var(--dial) * .186); border-radius: calc(var(--dial) * .054); display: grid; place-items: center; font: 900 calc(var(--dial) * .103)/1 var(--hud-font); font-style: italic; color: var(--ink); background: linear-gradient(180deg, #26345a, #16203a); box-shadow: 0 1px 0 rgba(255,246,230,.16) inset, 0 -2px 0 rgba(8,10,20,.35) inset, 0 12px 22px -10px rgba(6,8,18,.9); transition: background 200ms ease-out, box-shadow 200ms ease-out; }
     .speedo-gear.reverse { background: linear-gradient(180deg, var(--yellow), #ff8a1f); color: #1a1205; }
     .speedo-gear.brake { background: linear-gradient(180deg, var(--coral), #c8341c); box-shadow: 0 1px 0 rgba(255,255,255,.3) inset, 0 0 24px rgba(255,90,60,.6); }
-    .speedo-real { position: absolute; right: 10px; bottom: 22px; font-size: 11px; letter-spacing: .1em; opacity: .62; font-variant-numeric: tabular-nums; }
+    .speedo-real { position: absolute; right: calc(var(--dial) * .049); bottom: calc(var(--dial) * .108); font-size: calc(var(--dial) * .054); letter-spacing: .1em; opacity: .62; font-variant-numeric: tabular-nums; }
     .hud-bl .sound { display: inline-flex; align-items: center; gap: 6px; }
     #sound-glyph { color: var(--yellow); }
     #sound-glyph.off { color: var(--ink); opacity: .5; }
@@ -65,7 +68,7 @@
     #actions[hidden] { display: none; }
     #diagnostics { position: fixed; top: 115px; left: 24px; white-space: pre; font: 12px monospace; pointer-events: none; }
     .strip-label { position: fixed; font: 12px monospace; color: #fff; background: #0009; padding: 2px 6px; pointer-events: none; }
-    @media (max-width: 760px) { .hud-tl, .hud-bl { left: 12px; } #minimap, .hud-br, #speedo { right: 12px; } #minimap { width: 160px; height: 132px; } #speedo { width: 148px; height: 148px; } .hud-br { bottom: 172px; } .speedo-digits b { font-size: 38px; } .speedo-gear { width: 30px; height: 30px; font-size: 17px; bottom: 14px; } .hud-bl { bottom: 176px; max-width: calc(100vw - 24px); } .hud-bc { bottom: 242px; font-size: 17px; } .panel { padding: 10px 12px; } }
+    @media (max-width: 760px) { .hud-tl, .hud-bl { left: 12px; } #minimap, .hud-br, #speedo { right: 12px; } #minimap { width: 160px; height: 132px; } #speedo { --dial: 148px; } .speedo-scale { display: none; } .hud-br { bottom: 184px; } .hud-bl { bottom: 188px; max-width: calc(100vw - 24px); } .hud-bc { bottom: 254px; font-size: 17px; } .panel { padding: 10px 12px; } }
   </style>
   <script type="importmap">
     { "imports": {
@@ -88,7 +91,7 @@
     <a class="hud-panel hud-br" id="mode-link" href="?fallback=1">Simple room</a>
     <div id="speedo" aria-hidden="true">
       <canvas id="speedo-dial"></canvas>
-      <div class="speedo-digits"><b id="speedo-kmh">0</b><small>km/h · 1:36 scale</small></div>
+      <div class="speedo-digits"><b id="speedo-kmh">0</b><small>km/h<span class="speedo-scale"> · 1:36 scale</span></small></div>
       <div class="speedo-gear" id="speedo-gear">N</div>
       <div class="speedo-real"><span id="meter">0.00</span> m/s</div>
     </div>
