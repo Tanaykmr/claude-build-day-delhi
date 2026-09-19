@@ -12,10 +12,14 @@
 // Optional URL flag for slow machines / projector triage: ?detail=low drops monitors, divider
 // trim and most chairs (about 300 fewer boxes). Default is the full office.
 
-const DETAIL =
-  typeof location !== "undefined"
-    ? new URLSearchParams(location.search).get("detail") || "high"
-    : "high";
+// URL params (browser) or globalThis.ROOM_PARAMS (node, set by check-room.mjs) tune the data module:
+//   ?detail=low   drop monitors, divider trim and most chairs
+//   ?ramp=15      gentler ramp angle in degrees (default RAMP_DEG_DEFAULT), see ramp section
+const param = (k) =>
+  (typeof location !== "undefined" && new URLSearchParams(location.search).get(k)) ||
+  (globalThis.ROOM_PARAMS && globalThis.ROOM_PARAMS[k]) ||
+  null;
+const DETAIL = param("detail") || "high";
 const HIGH = DETAIL !== "low";
 
 // ---------- office dimensions (prd.md §4, provisional) ----------
@@ -32,11 +36,13 @@ export const BENCH_Z = [-4.8, -1.6, 1.6, 4.8];
 // ---------- ramp parameters (prd.md §6) ----------
 // RAMP_DEG is the ONE knob if A reports tipping: 17 → 15 lengthens the run 2.45 → 2.80 m and the
 // bench run shifts east automatically so the flat approach west of the foot stays FLAT_APPROACH.
+// Try it live without editing: /?ramp=15 (and node check-room.mjs --ramp=15). Change the default here.
 //   deg   run    BENCH_X  bench east end (cabin glass is at x=6.37)
 //   17    2.45   0.72     5.52
 //   16    2.62   0.89     5.69
 //   15    2.80   1.07     5.87
-export const RAMP_DEG = 17;
+const RAMP_DEG_DEFAULT = 17;
+export const RAMP_DEG = Math.min(18.5, Math.max(12, Number(param("ramp")) || RAMP_DEG_DEFAULT));
 export const RAMP_RUN = +(DESK_TOP / Math.tan((RAMP_DEG * Math.PI) / 180)).toFixed(3); // horizontal run
 export const FLAT_APPROACH = 1.25; // flat carpet between the west wall and the foot fillet
 export const FOOT_FILLET = 0.12; // half-angle entry plate ahead of the foot (part of the ramp, tag "ramp")

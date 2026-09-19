@@ -64,7 +64,8 @@ export const MATERIALS = {
 export const CARPET = {
   tile: 0.5, // meters
   base: "#4a4d52",
-  seam: "#3d4045", // slightly darker grout line between tiles
+  alt: "#50545a", // every other tile row (room.js already emits these as flat cuboids: PALETTE.carpetAlt)
+  seam: "#3a3d42", // grout line between tiles (room.js PALETTE.carpetSeam, 20 mm cuboid seams every 0.5 m)
   fleck: "#585c62", // noise flecks
   seamPx: 3,
   texturePx: 256, // per tile

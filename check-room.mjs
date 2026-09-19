@@ -1,9 +1,12 @@
 // check-room.mjs — B's headless sanity check for room.js / props.js / room.fallback.js.
 // Run: node check-room.mjs            (live room + props)
 //      node check-room.mjs --fallback (fallback room only)
+//      node check-room.mjs --ramp=15 --detail=low   (same knobs as the /?ramp= and /?detail= URL params)
 // Exits non-zero on hard failures. Pure geometry; no physics engine involved.
 
+// Extra flags mirror room.js URL params: --detail=low, --ramp=15
 const fallback = process.argv.includes("--fallback");
+globalThis.ROOM_PARAMS = Object.fromEntries(process.argv.filter((a) => a.startsWith("--") && a.includes("=")).map((a) => a.slice(2).split("=")));
 const room = await import(fallback ? "./room.fallback.js" : "./room.js");
 const { ROOM, SPAWN } = room;
 const { PROPS } = fallback ? { PROPS: [] } : await import("./props.js");
