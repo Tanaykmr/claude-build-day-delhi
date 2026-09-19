@@ -68,13 +68,17 @@ export const DEFAULT_HANDLING = 'classic';
 //   as Joyride's do (3.2% and 2.5%) [0.008 /s, 0.0002 /m]. Drag alone would still let gravity take the car
 //   to ~6 m/s down the ramp, so the classic downhill governor is kept: engine braking above governor·maxSpeed.
 // • reverseCap 35% [35%]; brake-before-reverse and "nearly stopped" thresholds 0.02 m/s [0.5 m/s], handbrake
-//   creep kill 0.011 m/s [0.3 m/s], both scaled by the maxSpeed ratio; handbrake drag 0.6·brake [same].
+//   creep kill 0.011 m/s [0.3 m/s], both scaled by the maxSpeed ratio.
+// • Handbrake drag 0.1·brake = 0.3 m/s² [0.6·brake = 8.4 m/s²]. Joyride's ratio would be 1.8 m/s² here and stop
+//   the car in 0.6 s, because our service brake is deliberately strong relative to speed (see Brake). The
+//   handbrake is a slide initiator, so it is scaled to Joyride's handbrake-only stop time from top speed
+//   instead: ~4 s [3.8 s]. The slide itself comes from driftGrip and the yaw-rate easing, not from the drag.
 // • Airborne = fewer than 2 wheels in contact: no traction, no yaw authority, Rapier integrates gravity.
 // • Visual squat/lean: pitch = -0.012·aF, roll = 0.02·yawRate·vF, clamped ±0.12 rad [same]; visual only.
 const JOYRIDE_DEFAULTS = {
   maxSpeed: 1.2, accel: 4.5, brake: 3, grip: 7, driftGrip: 2.2, steerMax: .5, wheelbase: 2 * CAR.wheelZ,
   slipThreshold: .28, rollingDrag: .12, quadDrag: .08, reverseCap: .35, stopThreshold: .02,
-  handbrakeCreep: .011, handbrakeBrake: .6, governor: 1.25, steerEase: 8, yawEase: 3, minContacts: 2,
+  handbrakeCreep: .011, handbrakeBrake: .1, governor: 1.25, steerEase: 8, yawEase: 3, minContacts: 2,
   visEase: 6, visPitchPerAccel: -.012, visRollPerAccel: .02, visClamp: .12,
 };
 export const JOYRIDE = Object.freeze({ ...JOYRIDE_DEFAULTS, ...(globalThis.CAR_OVERRIDE?.joyride || {}) });

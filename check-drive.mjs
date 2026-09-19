@@ -175,6 +175,64 @@ async function testRoom(path) {
   report('e2. resetCar restores spawn pose and zero velocity', posOk && rotOk && stillOk && !r.failure && r.last.contacts.every(Boolean) && Math.abs(wrap0(r.last.heading - SPAWN.heading)) < 1e-3,
     `pos ${posOk} rot ${rotOk} still ${stillOk}; settled at ${fmt(r.last)}`);
 
+  // (l) collision impulses survive the handling: shove the moving car sideways (as a wall or prop would) and
+  // expect the lateral speed to show the hit, then be scrubbed away by the tires. For joyride the decay over
+  // the first 6 steps must match its grip constant alone, (1-grip/60)^6 ≈ 0.48: proof that the zeroed vehicle
+  // controller is not adding a second lateral-grip authority on top of the planar model.
+  resetCar(car, SPAWN); drive(ctx, 1, IDLE);
+  r = drive(ctx, 1.2, FWD);
+  const before = r.last;
+  {
+    const l = (q => ({ x: 1 - 2 * (q.y * q.y + q.z * q.z), z: 2 * (q.x * q.z - q.w * q.y) }))(car.body.rotation()); // body left axis (flat)
+    const kick = .25; // m/s of lateral speed, below the joyride slip threshold so plain grip applies
+    car.body.applyImpulse({ x: -l.x * CAR.mass * kick, y: 0, z: -l.z * CAR.mass * kick }, true); // toward the car's right
+  }
+  let peakVL = 0, vl6 = null, slipSeen = 0, k = 0;
+  r = drive(ctx, .5, FWD, { watch: s => { k++; peakVL = Math.max(peakVL, Math.abs(s.vL)); if (k === 6) vl6 = Math.abs(s.vL); slipSeen = Math.max(slipSeen, Math.abs(Math.atan2(s.vL, Math.abs(s.fwd)))); return null; } });
+  const decayRatio = vl6 / .25;
+  const decayOk = car.handling === 'joyride' ? decayRatio > .35 && decayRatio < .62 : true;
+  report('l. sideways impulse shows in vL then decays', !r.failure && peakVL > .15 && Math.abs(r.last.vL) < .05 && slipSeen > .1 && decayOk && r.minUp > .9,
+    r.failure || `peak |vL| ${f3(peakVL)} m/s (slip angle ${f3(slipSeen)} rad), |vL| after 6 steps ${f3(vl6)} (${f3(decayRatio)} of the kick), after 0.5 s ${f3(Math.abs(r.last.vL))}; heading ${f3(before.heading)} → ${f3(r.last.heading)}`);
+  drive(ctx, 1, BRAKE);
+
+  if (car.handling === 'joyride') {
+    const J = (await import('./car.js')).JOYRIDE;
+    // (m) reverse tops out near 35% of top speed
+    resetCar(car, SPAWN); drive(ctx, 1, IDLE);
+    let peakRev = 0;
+    r = drive(ctx, 4, REV, { watch: s => { peakRev = Math.max(peakRev, -s.fwd); return null; } });
+    const cap = J.reverseCap * J.maxSpeed;
+    report('m. reverse capped at 35% of top speed', !r.failure && peakRev > cap * .6 && peakRev < cap + .02 && r.minUp > .95,
+      r.failure || `peak reverse ${f3(peakRev)} m/s vs cap ${f3(cap)} m/s`);
+    drive(ctx, 1, BRAKE);
+
+    // (n) steering authority drops with speed: the same full-left input yields less lock at top speed
+    resetCar(car, SPAWN); drive(ctx, 1, IDLE);
+    drive(ctx, 3, s => ({ throttle: s.fwd > .3 ? 0 : 1, steer: 0, brake: false }));
+    r = drive(ctx, .4, s => ({ throttle: s.fwd > .3 ? 0 : 1, steer: 1, brake: false }));
+    const slowSteer = r.last.steer, slowSpeed = r.last.fwd;
+    resetCar(car, SPAWN); drive(ctx, 1, IDLE);
+    drive(ctx, 3, FWD);
+    r = drive(ctx, .4, () => ({ throttle: 1, steer: 1, brake: false }));
+    const fastSteer = r.last.steer, fastSpeed = r.last.fwd;
+    report('n. steering authority drops at speed', !r.failure && fastSteer > 0 && slowSteer > fastSteer * 1.5 && slowSteer <= J.steerMax + 1e-6,
+      r.failure || `steer ${f3(slowSteer)} rad at ${f3(slowSpeed)} m/s vs ${f3(fastSteer)} rad at ${f3(fastSpeed)} m/s`);
+    drive(ctx, 1, BRAKE);
+
+    // (o) slide and recover: handbrake + full left at speed breaks traction (heading leaves the velocity direction),
+    // the car keeps rotating briefly after release (yaw inertia), then the slide decays progressively.
+    resetCar(car, { pos: [SPAWN.pos[0] + 1.2, SPAWN.pos[1], SPAWN.pos[2] + .3], heading: SPAWN.heading }); drive(ctx, 1, IDLE);
+    drive(ctx, 2, FWD);
+    let slideVL = 0, slideAngle = 0;
+    r = drive(ctx, .8, () => ({ throttle: 0, steer: 1, brake: false, handbrake: true }), { watch: s => { slideVL = Math.max(slideVL, Math.abs(s.vL)); slideAngle = Math.max(slideAngle, Math.abs(Math.atan2(s.vL, s.fwd))); return s.up < .9 ? `tipped at ${fmt(s)}` : null; } });
+    const releaseHeading = r.last.heading;
+    const r2 = drive(ctx, .25, IDLE);
+    const inertia = wrap0(r2.last.heading - releaseHeading);
+    const r3 = drive(ctx, 1.25, IDLE);
+    report('o. handbrake slide then progressive recovery', !r.failure && !r2.failure && !r3.failure && slideVL > J.slipThreshold && slideAngle > .3 && inertia > .05 && Math.abs(r3.last.vL) < .05 && r3.minUp > .9,
+      r.failure || r2.failure || r3.failure || `peak |vL| ${f3(slideVL)} m/s, peak slip angle ${f3(slideAngle)} rad, kept turning ${f3(inertia)} rad in 0.25 s after release, |vL| after 1.5 s ${f3(Math.abs(r3.last.vL))}, at ${fmt(r3.last)}`);
+  }
+
   // (f) ramp ascent
   const ramp = ROOM.find(en => en.tag === 'ramp');
   if (!ramp) { report('f. ramp ascent', false, 'no ramp entry in ROOM'); return; }
