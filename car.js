@@ -151,7 +151,7 @@ export function createCar(RAPIER, world, spawn, { handling = DEFAULT_HANDLING } 
     vF: 0, vL: 0, aF: 0, yawRate: 0, contacts: 0, airborne: false, slipping: false, brakeLight: 0, visPitch: 0, visRoll: 0,
     // Wheel spin from actual travel (Joyride: spin += vF·dt/wheelR, kept wrapped). wheelSpinDelta is this step's
     // increment so the renderer can interpolate without wrap problems and clamp the visual rate against aliasing.
-    wheelSpin: 0, wheelSpinDelta: 0,
+    wheelSpin: 0, wheelSpinDelta: 0, input: { throttle: 0, steer: 0, brake: false, handbrake: false },
   };
 }
 // Advance the shared wheel spin from the forward speed of this step.
@@ -200,6 +200,7 @@ export function stepVehicle(car, input) {
     brake: !!input.brake, handbrake: !!input.handbrake,
   };
   if (input.throttle || input.steer || input.brake || input.handbrake) car.body.wakeUp();
+  car.input = input; // last sanitized input, for audio/visual feedback (motor tone follows the throttle)
   if (car.handling === 'joyride') stepJoyride(car, input); else stepClassic(car, input);
 }
 

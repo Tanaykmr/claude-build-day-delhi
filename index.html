@@ -75,7 +75,7 @@
     <canvas id="minimap" class="hud-panel" width="448" height="368" hidden aria-label="Minimap"></canvas>
     <div id="countdown" class="hud-center" hidden aria-live="assertive">3</div>
     <div class="hud-panel hud-bc" id="title-strip" hidden><kbd>Enter</kbd> race · 3 laps vs 3 rivals</div>
-    <div class="hud-panel hud-bl" id="controls"><span><kbd>WASD / arrows</kbd> drive</span><span><kbd>Space</kbd> brake</span><span><kbd>Shift</kbd> handbrake</span><span><kbd>R</kbd> recover</span><span id="race-keys" hidden><kbd>Enter</kbd> race · <kbd>Esc</kbd> free drive</span><span><kbd>M</kbd> sound</span></div>
+    <div class="hud-panel hud-bl" id="controls"><span><kbd>WASD / arrows</kbd> drive</span><span><kbd>Space</kbd> brake</span><span><kbd>Shift</kbd> handbrake</span><span><kbd>R</kbd> recover</span><span id="race-keys" hidden><kbd>Enter</kbd> race · <kbd>Esc</kbd> free drive</span><span><kbd>M</kbd> <span id="sound-label">sound</span></span></div>
     <a class="hud-panel hud-br" id="mode-link" href="?fallback=1">Simple room</a>
     <div class="hud-panel hud-results" id="results" hidden role="status"><h2 id="results-title">Finished</h2><div class="time" id="results-time"></div><ol id="results-list"></ol><div class="hint"><kbd>Enter</kbd> race again · <kbd>Esc</kbd> free drive</div></div>
   </div>
@@ -455,6 +455,7 @@
       function setPaused(value) {
         clearInput(); paused = value; accumulator = 0; lastTime = null;
         if (value) resetPoses(); // nothing moved while paused: do not blend back toward a stale previous pose on resume
+        if (typeof audio !== 'undefined') audio[value ? 'suspend' : 'resume']();
         if (failed) return;
         overlay.hidden = !paused;
         if (paused) {
@@ -587,6 +588,7 @@
         world.step();
         simTime += STEP;
         capturePoses(currPose); racers.forEach(captureWheels);
+        detectImpacts(); tireDust();
         if (!validBody(car.body) || props.some(p => !validBody(p.body)) || racers.some((r, i) => i && race && !validBody(r.car.body))) throw new Error('Physics became non-finite. Reload for a clean simulation.');
         const bounds = floorBounds.isEmpty() ? roomBounds : floorBounds;
         racers.forEach((r, i) => {
@@ -669,7 +671,7 @@
         drawMinimap();
         if (!race) return;
         const me = race.cars[0];
-        if (race.phase === 'countdown') set('cd', hud.countdown, String(Math.ceil(race.countdown)));
+        if (race.phase === 'countdown') { const n = String(Math.ceil(race.countdown)); if (hud.last.cd !== n) audio.event('beep'); set('cd', hud.countdown, n); }
         else if (goTimer > 0) { set('cd', hud.countdown, 'GO'); hud.countdown.classList.add('go'); }
         else hud.countdown.hidden = true;
         set('lap', hud.lap, `${Math.min(race.laps, me.lap + 1)}/${race.laps}`);
@@ -679,8 +681,208 @@
         if (race.phase === 'finished' && hud.last.resultsOrder !== order.join()) { hud.last.resultsOrder = order.join(); showResults(); }
       }
       const audio = createAudio();
-      // Synthesized audio (A2.4). Until it lands, a silent stub keeps the hooks callable.
-      function createAudio() { return { muted: true, toggleMute() { this.muted = !this.muted; }, event() {}, update() {} }; }
+      // ---- Synthesized audio (Web Audio, generated in code; adapted from Joyride's audio.js, see car.js attribution).
+      // No AudioContext exists until the first user gesture (autoplay policy); everything after that is guarded so a
+      // platform without audio simply stays silent. Continuous voices (motor, tire scrub) are built once and driven
+      // with setTargetAtTime; one-shots (impacts, beeps, chimes) are created per event and tear themselves down.
+      function createAudio() {
+        const MASTER = .45, TAU = .05;
+        const a = { ctx: null, ok: false, muted: false, master: null, noise: null, osc1: null, osc2: null, engFilter: null, engGain: null, scrubGain: null };
+        const label = document.querySelector('#sound-label');
+        function build(ctx) {
+          const master = ctx.createGain(); master.gain.value = a.muted ? 0 : MASTER; master.connect(ctx.destination); a.master = master;
+          const len = Math.floor(ctx.sampleRate * 2), noise = ctx.createBuffer(1, len, ctx.sampleRate), data = noise.getChannelData(0);
+          let seed = 22222;
+          for (let i = 0; i < len; i++) { seed = (seed * 1664525 + 1013904223) >>> 0; data[i] = seed / 2147483648 - 1; }
+          a.noise = noise;
+          // motor: two detuned saws through a throttle-driven low-pass (an RC motor whines higher than Joyride's V8)
+          const engGain = ctx.createGain(); engGain.gain.value = 0; engGain.connect(master);
+          const engFilter = ctx.createBiquadFilter(); engFilter.type = 'lowpass'; engFilter.frequency.value = 700; engFilter.Q.value = .9; engFilter.connect(engGain);
+          const mk = detune => { const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = 120; o.detune.value = detune; o.connect(engFilter); o.start(); return o; };
+          a.osc1 = mk(-7); a.osc2 = mk(7); a.engFilter = engFilter; a.engGain = engGain;
+          // tire scrub: looped noise through a narrow band-pass, gain from lateral slip
+          const scrubGain = ctx.createGain(); scrubGain.gain.value = 0; scrubGain.connect(master);
+          const scrubFilter = ctx.createBiquadFilter(); scrubFilter.type = 'bandpass'; scrubFilter.frequency.value = 1200; scrubFilter.Q.value = 5; scrubFilter.connect(scrubGain);
+          const src = ctx.createBufferSource(); src.buffer = noise; src.loop = true; src.connect(scrubFilter); src.start();
+          a.scrubGain = scrubGain;
+        }
+        const tail = node => { node.onended = () => { try { node.disconnect(); node._chain?.disconnect(); } catch (e) { /* torn down */ } }; };
+        function out(t, pan) { // one-shot output: optional stereo pan, then master
+          if (!pan) return a.master;
+          const p = a.ctx.createStereoPanner ? a.ctx.createStereoPanner() : null;
+          if (!p) return a.master;
+          p.pan.setValueAtTime(Math.max(-1, Math.min(1, pan)), t); p.connect(a.master); return p;
+        }
+        function burst(t, dur, peak, type, f0, f1, q, pan) {
+          const ctx = a.ctx, src = ctx.createBufferSource(); src.buffer = a.noise; src.loop = true;
+          const filter = ctx.createBiquadFilter(); filter.type = type; filter.frequency.setValueAtTime(f0, t); if (f1 !== f0) filter.frequency.exponentialRampToValueAtTime(f1, t + dur); filter.Q.value = q;
+          const gain = ctx.createGain(); gain.gain.setValueAtTime(.0001, t); gain.gain.linearRampToValueAtTime(peak, t + Math.min(.02, dur * .2)); gain.gain.exponentialRampToValueAtTime(.0001, t + dur);
+          src.connect(filter); filter.connect(gain); gain.connect(out(t, pan));
+          src.start(t, (t * 7.3) % 1); src.stop(t + dur); src._chain = gain; tail(src);
+        }
+        function tone(t, freq, dur, peak, type = 'sine', pan = 0) {
+          const ctx = a.ctx, osc = ctx.createOscillator(); osc.type = type; osc.frequency.setValueAtTime(freq, t);
+          const gain = ctx.createGain(); gain.gain.setValueAtTime(.0001, t); gain.gain.linearRampToValueAtTime(peak, t + .012); gain.gain.exponentialRampToValueAtTime(.0001, t + dur);
+          osc.connect(gain); gain.connect(out(t, pan)); osc.start(t); osc.stop(t + dur); osc._chain = gain; tail(osc);
+        }
+        function boom(t, freq, dur, peak, pan) {
+          const ctx = a.ctx, osc = ctx.createOscillator(); osc.type = 'sine'; osc.frequency.setValueAtTime(freq * 1.6, t); osc.frequency.exponentialRampToValueAtTime(freq, t + dur * .6);
+          const gain = ctx.createGain(); gain.gain.setValueAtTime(.0001, t); gain.gain.linearRampToValueAtTime(peak, t + .012); gain.gain.exponentialRampToValueAtTime(.0001, t + dur);
+          osc.connect(gain); gain.connect(out(t, pan)); osc.start(t); osc.stop(t + dur); osc._chain = gain; tail(osc);
+        }
+        a.unlock = () => {
+          if (a.ctx) { a.resume(); return; }
+          const Ctor = window.AudioContext || window.webkitAudioContext;
+          if (!Ctor) return;
+          try { const ctx = new Ctor(); build(ctx); a.ctx = ctx; a.ok = true; } catch (error) { a.ctx = null; a.ok = false; return; }
+          a.resume();
+          if (label) label.textContent = a.muted ? 'sound off' : 'sound on';
+        };
+        a.resume = () => { if (a.ctx?.state === 'suspended') a.ctx.resume().catch(() => {}); };
+        a.suspend = () => { if (a.ctx?.state === 'running') a.ctx.suspend().catch(() => {}); };
+        a.toggleMute = () => {
+          a.muted = !a.muted;
+          if (label) label.textContent = a.muted ? 'sound off' : (a.ok ? 'sound on' : 'sound');
+          if (!a.ok) return;
+          try { a.master.gain.setTargetAtTime(a.muted ? 0 : MASTER, a.ctx.currentTime, .02); } catch (error) { a.ok = false; }
+        };
+        a.update = (car, dt) => {
+          if (!a.ok || a.muted) return;
+          try {
+            const t = a.ctx.currentTime, speed = Math.abs(car.vF), throttle = Math.abs(car.input.throttle);
+            const rpm = .25 + speed / 1.2, r3 = rpm * 3, frac = r3 - Math.floor(r3); // three "gears": the tone climbs, drops, climbs again
+            const freq = 120 + frac * 260;
+            a.osc1.frequency.setTargetAtTime(freq, t, TAU); a.osc2.frequency.setTargetAtTime(freq, t, TAU);
+            a.engFilter.frequency.setTargetAtTime(700 + 2200 * throttle, t, TAU);
+            a.engGain.gain.setTargetAtTime(.09 + .15 * throttle, t, TAU);
+            const scrub = Math.max(0, Math.min(1, (Math.abs(car.vL) - .12) / .35));
+            a.scrubGain.gain.setTargetAtTime(scrub * .28, t, TAU);
+          } catch (error) { a.ok = false; }
+        };
+        a.event = (name, detail = {}) => {
+          if (!a.ok || a.muted) return;
+          try {
+            const t = a.ctx.currentTime;
+            if (name === 'beep') tone(t, 880, .1, .22, 'square');
+            else if (name === 'go') tone(t, 1320, .38, .28, 'square');
+            else if (name === 'checkpoint') tone(t, 1568, .05, .06);
+            else if (name === 'lap') { tone(t, 1047, .12, .2); tone(t + .13, 1319, .18, .2); }
+            else if (name === 'finish') [1047, 1319, 1568, 2093].forEach((f, i) => tone(t + i * .13, f, .22, .2));
+            else if (name === 'impact') { const p = Math.min(1, detail.strength); burst(t, .22, .55 * p, 'lowpass', 800, 800, .8, detail.pan); boom(t, 60, .28, .6 * p, detail.pan); }
+            else if (name === 'clatter') burst(t, .08, .25 * Math.min(1, detail.strength + .3), 'highpass', 2000, 2000, .8, detail.pan);
+          } catch (error) { a.ok = false; }
+        };
+        for (const type of ['keydown', 'pointerdown']) window.addEventListener(type, () => a.unlock(), { once: true, capture: true });
+        return a;
+      }
+      // ---- Contact effects (A2.5): one instanced pool of small unlit boxes for dust puffs and sparks, spawned at the
+      // solver contact points Rapier reports for a car's collider (props, furniture, walls, rivals, on desks too),
+      // plus tire dust from the rear wheels while sliding. Bounded pool; oldest particles are recycled. No damage.
+      const PARTICLE_MAX = 160;
+      function createParticles() {
+        const mesh = new THREE.InstancedMesh(box, new THREE.MeshBasicMaterial({ transparent: true, opacity: .62, depthWrite: false }), PARTICLE_MAX);
+        mesh.frustumCulled = false; mesh.count = 0;
+        const white = new THREE.Color(1, 1, 1);
+        for (let i = 0; i < PARTICLE_MAX; i++) mesh.setColorAt(i, white);
+        scene.add(mesh);
+        const pos = new Float32Array(PARTICLE_MAX * 3), vel = new Float32Array(PARTICLE_MAX * 3), life = new Float32Array(PARTICLE_MAX), maxLife = new Float32Array(PARTICLE_MAX);
+        const size = new Float32Array(PARTICLE_MAX), kind = new Uint8Array(PARTICLE_MAX), spin = new Float32Array(PARTICLE_MAX);
+        let count = 0, cursor = 0;
+        const m4 = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), e = new THREE.Euler(), c = new THREE.Color();
+        const DUST = 0, SPARK = 1, colors = [new THREE.Color(0xc9c2b2), new THREE.Color(0xffb340)], haze = new THREE.Color(0x9aa0a8);
+        let seed = 12345; const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296 - .5;
+        function spawn(x, y, z, k, speed, up, sz, lifeS) {
+          const i = count < PARTICLE_MAX ? count++ : (cursor++ % PARTICLE_MAX); // full: recycle the oldest slots round-robin
+          pos[i * 3] = x; pos[i * 3 + 1] = y; pos[i * 3 + 2] = z;
+          vel[i * 3] = rnd() * 2 * speed; vel[i * 3 + 1] = up + Math.abs(rnd()) * speed; vel[i * 3 + 2] = rnd() * 2 * speed;
+          life[i] = 0; maxLife[i] = lifeS * (.7 + Math.abs(rnd()) * .6); size[i] = sz * (.7 + Math.abs(rnd()) * .6); kind[i] = k; spin[i] = rnd() * 6;
+        }
+        return {
+          mesh,
+          // an impact at a world point: dust always, sparks when it was hard
+          impact(x, y, z, strength) {
+            const n = Math.min(12, Math.round(3 + 8 * strength));
+            for (let i = 0; i < n; i++) spawn(x, y, z, DUST, .08 + .12 * strength, .06, .004 + .005 * strength, .45);
+            if (strength > .45) for (let i = 0; i < Math.round(4 + 8 * strength); i++) spawn(x, y, z, SPARK, .35 + .4 * strength, .15, .0025, .22);
+          },
+          // tire dust from a sliding wheel contact point
+          dust(x, y, z, amount) { spawn(x, y, z, DUST, .05, .03 + .05 * amount, .0035 + .004 * amount, .35); },
+          update(dt) {
+            let n = 0;
+            for (let i = 0; i < count; i++) {
+              life[i] += dt;
+              if (life[i] >= maxLife[i]) { // swap-remove: the live set stays [0, count)
+                const j = --count;
+                for (let k = 0; k < 3; k++) { pos[i * 3 + k] = pos[j * 3 + k]; vel[i * 3 + k] = vel[j * 3 + k]; }
+                life[i] = life[j]; maxLife[i] = maxLife[j]; size[i] = size[j]; kind[i] = kind[j]; spin[i] = spin[j]; i--; continue;
+              }
+              const g = kind[i] === SPARK ? 9.81 : .6, drag = kind[i] === SPARK ? 1.5 : 3;
+              vel[i * 3 + 1] -= g * dt;
+              for (let k = 0; k < 3; k++) { vel[i * 3 + k] *= Math.max(0, 1 - drag * dt); pos[i * 3 + k] += vel[i * 3 + k] * dt; }
+              if (pos[i * 3 + 1] < .002 && kind[i] === SPARK) { pos[i * 3 + 1] = .002; vel[i * 3 + 1] *= -.3; }
+              const age = life[i] / maxLife[i], grow = kind[i] === DUST ? 1 + age : 1, fade = age < .6 ? 1 : 1 - (age - .6) / .4;
+              p.set(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]); e.set(spin[i] * life[i], spin[i] * .7 * life[i], 0); q.setFromEuler(e);
+              const s = size[i] * grow * Math.max(.05, fade); sc.set(s, s, s);
+              m4.compose(p, q, sc); mesh.setMatrixAt(n, m4);
+              c.copy(colors[kind[i]]); if (kind[i] === DUST) c.lerp(haze, age * .5); else c.lerp(new THREE.Color(0xff3b2e), age);
+              mesh.setColorAt(n, c); n++;
+            }
+            mesh.count = n; mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+          },
+        };
+      }
+      const particles = createParticles();
+      // Impact detection from Rapier's contact manifolds after each step: per racer the summed contact impulse and the
+      // mean solver contact point. Only a RISE in impulse counts as a hit (leaning on a wall is not a series of hits),
+      // rate-limited to one event per 0.15 s per car. strength = impulse / (mass · top speed) = fraction of a
+      // full-speed stop. Player hits also drive audio (panned by contact side) and a restrained camera impulse.
+      let camShake = 0;
+      const contactMemo = racers.map(() => ({ prev: 0, cooldown: 0 }));
+      const leftAxis = new THREE.Vector3(), contactRel = new THREE.Vector3();
+      function detectImpacts() {
+        racers.forEach((r, i) => {
+          if (i && !race) return;
+          const memo = contactMemo[i];
+          memo.cooldown = Math.max(0, memo.cooldown - STEP);
+          const collider = r.car.body.collider(0);
+          let impulse = 0, px = 0, py = 0, pz = 0, n = 0, dynamic = false;
+          world.contactPairsWith(collider, other => {
+            world.contactPair(collider, other, manifold => {
+              for (let k = 0, c = manifold.numContacts(); k < c; k++) impulse += Math.abs(manifold.contactImpulse(k));
+              for (let k = 0, c = manifold.numSolverContacts(); k < c; k++) { const pt = manifold.solverContactPoint(k); px += pt.x; py += pt.y; pz += pt.z; n++; }
+              if (other.parent()?.isDynamic()) dynamic = true;
+            });
+          });
+          const rise = impulse - memo.prev;
+          memo.prev = impulse;
+          if (n === 0 || rise <= 0 || memo.cooldown > 0) return;
+          const strength = rise / (CAR.mass * 1.2);
+          if (strength < .12) return;
+          memo.cooldown = .15;
+          px /= n; py /= n; pz /= n;
+          particles.impact(px, py, pz, Math.min(1, strength));
+          if (i === 0) {
+            const q = r.car.body.rotation(), t = r.car.body.translation();
+            leftAxis.set(1, 0, 0).applyQuaternion(q); contactRel.set(px - t.x, py - t.y, pz - t.z);
+            const pan = -Math.max(-1, Math.min(1, contactRel.dot(leftAxis) / .04)); // Web Audio: -1 = left
+            audio.event(dynamic ? 'clatter' : 'impact', { strength, pan });
+            if (!dynamic && strength > .45) camShake = Math.min(.008, camShake + .006 * strength);
+          }
+        });
+      }
+      const dustAcc = racers.map(() => 0);
+      function tireDust() {
+        racers.forEach((r, i) => {
+          if (!r.visual.group.visible) return;
+          const slip = Math.abs(r.car.vL);
+          if (!r.car.slipping || slip < .25 || r.car.airborne) { dustAcc[i] = 0; return; }
+          dustAcc[i] += STEP * Math.min(24, 40 * slip); // puffs per second per wheel pair
+          while (dustAcc[i] >= 1) {
+            dustAcc[i]--;
+            for (const w of [2, 3]) { if (!r.car.controller.wheelIsInContact(w)) continue; const pt = r.car.controller.wheelContactPoint(w); if (pt) particles.dust(pt.x, pt.y + .002, pt.z, Math.min(1, slip)); }
+          }
+        });
+      }
       const forward = new THREE.Vector3(), anchor = new THREE.Vector3(), want = new THREE.Vector3(), wantLook = new THREE.Vector3();
       const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), camFwd = { x: Math.sin(SPAWN.heading), z: Math.cos(SPAWN.heading) };
       const rayDirection = new THREE.Vector3(), lifted = new THREE.Vector3(), raycaster = new THREE.Raycaster();
@@ -724,6 +926,8 @@
         if (snapCamera) { camState.clip = wantClip; camState.lift = wantLift; }
         camera.position.lerpVectors(anchor, camPos, camState.clip); camera.position.y += camState.lift * CAMERA.lift;
         camera.lookAt(camLook); snapCamera = false;
+        // Restrained impact impulse: a few millimetres of decaying jitter on hard hits only (never on the look target).
+        if (camShake > 1e-5) { camera.position.x += (Math.random() - .5) * 2 * camShake; camera.position.y += (Math.random() - .5) * camShake; camera.position.z += (Math.random() - .5) * 2 * camShake; camShake *= Math.exp(-7 * dt); }
       }
       window.addEventListener('resize', () => {
         camera.aspect = innerWidth / Math.max(1, innerHeight); camera.updateProjectionMatrix();
@@ -754,7 +958,7 @@
         camera.aspect = cw / ch; camera.updateProjectionMatrix();
         const stepsPerCell = Math.max(1, Math.round(strip.dt / STEP));
         for (let i = 0; i < strip.frames; i++) {
-          if (i > 0) for (let k = 0; k < stepsPerCell; k++) { step(); syncMeshes(); updateCamera(STEP); }
+          if (i > 0) for (let k = 0; k < stepsPerCell; k++) { step(); syncMeshes(); updateCamera(STEP); particles.update(STEP); }
           const col = i % cols, row = Math.floor(i / cols);
           target.viewport.set(col * cw * pr, (H - (row + 1) * ch) * pr, cw * pr, ch * pr); target.scissor.copy(target.viewport);
           renderer.setRenderTarget(target); renderer.render(scene, camera);
@@ -787,7 +991,7 @@
             if (steps) { stepMs += performance.now() - t0; stepCount += steps; }
             stepHist[steps]++;
             if (steps === 6) accumulator = 0;
-            syncMeshes(accumulator / STEP); updateCamera(dt); updateHud(); audio.update(car, dt);
+            syncMeshes(accumulator / STEP); updateCamera(dt); updateHud(); audio.update(car, dt); particles.update(dt);
           }
           renderer.render(scene, camera);
           frames++; sampleTime += dt;
