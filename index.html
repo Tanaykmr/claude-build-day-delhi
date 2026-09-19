@@ -71,7 +71,7 @@
     #actions[hidden] { display: none; }
     #diagnostics { position: fixed; top: 115px; left: 24px; white-space: pre; font: 12px monospace; pointer-events: none; }
     .strip-label { position: fixed; font: 12px monospace; color: #fff; background: #0009; padding: 2px 6px; pointer-events: none; }
-    @media (max-width: 760px) { .hud-tl, .hud-bl { left: 12px; } #minimap, .hud-br, #speedo { right: 12px; } #minimap { width: 160px; height: 132px; } #speedo { --dial: 148px; } .speedo-scale { display: none; } .speedo-real { left: 0; right: 0; bottom: calc(var(--dial) * .30); text-align: center; letter-spacing: .06em; } .hud-br { bottom: 184px; } .hud-bl { bottom: 188px; max-width: calc(100vw - 24px); } .hud-bc { bottom: 254px; font-size: 17px; } .panel { padding: 10px 12px; } }
+    @media (max-width: 760px) { .hud-tl, .hud-bl { left: 12px; } #minimap, .hud-br, #speedo { right: 12px; } #minimap { width: 160px; height: 132px; } #speedo { --dial: 148px; } .speedo-scale { display: none; } .speedo-real { display: none; } /* a 148px face carries a number, a unit and a gear pill legibly, not four things; #meter stays in the DOM, so the headless probes still read it */ .hud-br { bottom: 184px; } .hud-bl { bottom: 188px; max-width: calc(100vw - 24px); } .hud-bc { bottom: 254px; font-size: 17px; } .panel { padding: 10px 12px; } }
   </style>
   <script type="importmap">
     { "imports": {
