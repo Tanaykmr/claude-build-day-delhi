@@ -212,6 +212,17 @@ if (RACE) {
   const loop = RACE.checkpoints.map((c) => new THREE.Vector3(c.pos[0], c.pos[1] + 0.01, c.pos[2]));
   loop.push(loop[0].clone());
   raceRoot.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(loop), new THREE.LineBasicMaterial({ color: "#ffd23f" })));
+  // racing line: one dot per waypoint, green at full speed → red in the turns, joined by a white line
+  if (RACE.line) {
+    const pts = RACE.line.map((p) => new THREE.Vector3(p.pos[0], p.pos[1] + 0.02, p.pos[2]));
+    pts.push(pts[0].clone());
+    raceRoot.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: "#ffffff" })));
+    const dot = new THREE.SphereGeometry(0.03, 8, 6);
+    for (const p of RACE.line) {
+      const m = new THREE.Mesh(dot, new THREE.MeshBasicMaterial({ color: new THREE.Color().setHSL(p.speed * 0.33, 0.9, 0.5) }));
+      m.position.set(p.pos[0], p.pos[1] + 0.02, p.pos[2]); raceRoot.add(m);
+    }
+  }
   const slabMat = new THREE.MeshBasicMaterial({ color: "#ffc45d" });
   for (const g of RACE.grid) {
     const slab = new THREE.Mesh(box, slabMat); slab.scale.set(0.055, 0.004, 0.12);
@@ -324,7 +335,7 @@ function stats() {
     `draw calls ${renderer.info.render.calls}  tris ${(renderer.info.render.triangles / 1000).toFixed(1)}k  fps ${fps}\n` +
     Object.entries(tags).map(([k, v]) => `${k}:${v}`).join(" ") + "\n" +
     (RAMP ? `ramp ${(RAMP.theta * 180 / Math.PI).toFixed(1)}° len ${RAMP.length.toFixed(2)} m  ${RAMP.p0[0]}→${RAMP.p1[0]} x` : "") +
-    (RACE ? `\nrace ${RACE.checkpoints.length} checkpoints · ${RACE.laps} laps · ${RACE.grid.length} grid · ${RACE.minimap.walls.length} minimap walls` : "");
+    (RACE ? `\nrace ${RACE.checkpoints.length} checkpoints · ${RACE.line ? RACE.line.length + " line pts · " : ""}${RACE.laps} laps · ${RACE.grid.length} grid · ${RACE.minimap.walls.length} minimap walls` : "");
 }
 
 // ---------- live reload: poll Last-Modified of B's files ----------

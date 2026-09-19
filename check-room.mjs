@@ -29,6 +29,10 @@ const aabb = (e) => {
     const [rx, ry, rz] = e.rot;
     const c = Math.abs(Math.cos(rz)), s = Math.abs(Math.sin(rz));
     const ex = (sx * c + sy * s) / 2, ey = (sx * s + sy * c) / 2;
+    if (ry && !rx && !rz) { // yaw only (race chevrons): exact box, vertical extent unchanged
+      const cy = Math.abs(Math.cos(ry)), sy_ = Math.abs(Math.sin(ry));
+      return { min: [x - (sx * cy + sz * sy_) / 2, y - sy / 2, z - (sx * sy_ + sz * cy) / 2], max: [x + (sx * cy + sz * sy_) / 2, y + sy / 2, z + (sx * sy_ + sz * cy) / 2], rotated: true };
+    }
     if (rx || ry) return { min: [x - Math.hypot(sx, sy, sz) / 2, y - Math.hypot(sx, sy, sz) / 2, z - Math.hypot(sx, sy, sz) / 2], max: [x + Math.hypot(sx, sy, sz) / 2, y + Math.hypot(sx, sy, sz) / 2, z + Math.hypot(sx, sy, sz) / 2], rotated: true };
     return { min: [x - ex, y - ey, z - sz / 2], max: [x + ex, y + ey, z + sz / 2], rotated: true };
   }
@@ -158,35 +162,44 @@ if (main) {
   else ok(`ramp landing zone x ${p1[0].toFixed(2)}..${(p1[0] + 0.5).toFixed(2)} on the desk is clear`);
 }
 
-// ---------- route corridors (live room only) ----------
-const corridor = (name, min, max, allow = new Set(["carpet"])) => {
+// ---------- route corridors (both rooms: room.fallback.js exports BENCH_X / BENCH_Z / GAP_PITCH too) ----------
+// floor: true marks the y<0.3 boxes that together form the race corridors; RACE.line must lie inside their union.
+const CORRIDORS = [];
+const corridor = (name, min, max, allow = new Set(["carpet"]), floor = false) => {
   const bb = { min, max };
+  CORRIDORS.push({ name, bb, floor });
   const hits = solids.filter(({ e, bb: b }) => !allow.has(e.tag) && overlaps(bb, b));
   if (hits.length) fail(`${name} blocked by ${[...new Set(hits.map((h) => h.e.tag))].join(",")} (${hits.length})`);
   else ok(`${name} clear`);
 };
-if (!fallback && room.BENCH_Z) {
+if (room.BENCH_Z && room.BENCH_X !== undefined) {
   const X0 = room.BENCH_X - 4.8;
-  corridor("spawn aisle (z -0.7..0.7, west end → east end, y<0.3)", [-7.6, 0.0005, -0.7], [5.2, 0.3, 0.7]);
-  corridor("aisle shoulders (z -0.8..0.8: chair bases stop at the desk-edge line)", [-6.0, 0.0005, -0.8], [5.2, 0.3, 0.8]);
-  corridor("driven desk lane (z -2.15..-1.85, y 0.75..0.95)", [X0, 0.7505, -2.15], [X0 + 9.6, 0.95, -1.85], new Set(["desktop"]));
-  corridor("divider gap on desk (x gap pitch, z -2.15..-1.05)", [X0 + 0.6 + room.GAP_PITCH * 1.2 - 0.5, 0.7505, -2.15], [X0 + 0.6 + room.GAP_PITCH * 1.2 + 0.5, 0.95, -1.05], new Set(["desktop"]));
-  corridor("under-desk crossing (gap pitch, z -2.6..-0.6, y<0.3)", [X0 + 0.6 + room.GAP_PITCH * 1.2 - 0.5, 0.0005, -2.6], [X0 + 0.6 + room.GAP_PITCH * 1.2 + 0.5, 0.3, -0.6]);
-  corridor("west turning zone (x -7.7..-6.7, z -2.3..0.8, y<0.3)", [-7.7, 0.0005, -2.3], [-6.7, 0.3, 0.8]);
-  // enrichment zones: the gap pitch stays crossable under EVERY bench (bins, pedestals, cable drops, towers keep off it)
-  const gapX = X0 + 0.6 + room.GAP_PITCH * 1.2;
-  room.BENCH_Z.forEach((bz, b) => corridor(`under-desk crossing bench ${b} (gap pitch, z ${(bz - 1).toFixed(1)}..${(bz + 1).toFixed(1)}, y<0.3)`, [gapX - 0.5, 0.0005, bz - 1.0], [gapX + 0.5, 0.3, bz + 1.0]));
-  // race loop legs (RACE in room.js): north aisle, east-end turn between the bench end and the cabin sill, west-end turn
+  const gapX = X0 + 0.6 + (room.GAP_PITCH ?? 3) * 1.2;
   const benchEast = room.BENCH_X + 4.8;
-  corridor("race: north aisle (x -5.6..5.2, z -4.0..-2.4, y<0.3)", [-5.6, 0.0005, -4.0], [5.2, 0.3, -2.4]);
-  corridor(`race: east-end turn (x ${(benchEast + 0.05).toFixed(2)}..6.35, z -3.2..0, y<0.3)`, [benchEast + 0.05, 0.0005, -3.2], [6.35, 0.3, 0]);
-  corridor("race: west-end turn (x -7.7..-6.7, z -3.3..-2.3, y<0.3)", [-7.7, 0.0005, -3.3], [-6.7, 0.3, -2.3]);
+  corridor("spawn aisle (z -0.7..0.7, west end → cabin sill, y<0.3)", [-7.6, 0.0005, -0.7], [6.35, 0.3, 0.7], undefined, true);
+  corridor("aisle shoulders (z -0.8..0.8: chair bases stop at the desk-edge line)", [-6.0, 0.0005, -0.8], [6.35, 0.3, 0.8], undefined, true);
+  corridor("driven desk lane (z -2.15..-1.85, y 0.75..0.95)", [X0, 0.7505, -2.15], [X0 + 9.6, 0.95, -1.85], new Set(["desktop"]));
+  corridor("divider gap on desk (x gap pitch, z -2.15..-1.05)", [gapX - 0.5, 0.7505, -2.15], [gapX + 0.5, 0.95, -1.05], new Set(["desktop"]));
+  corridor("under-desk crossing (gap pitch, z -2.6..-0.6, y<0.3)", [gapX - 0.5, 0.0005, -2.6], [gapX + 0.5, 0.3, -0.6]);
+  corridor("west turning zone (x -7.7..-6.7, z -2.3..0.8, y<0.3)", [-7.7, 0.0005, -2.3], [-6.7, 0.3, 0.8], undefined, true);
+  // enrichment zones: the gap pitch stays crossable under EVERY bench (bins, pedestals, cable drops, towers keep off it)
+  room.BENCH_Z.forEach((bz, b) => corridor(`under-desk crossing bench ${b} (gap pitch, z ${(bz - 1).toFixed(1)}..${(bz + 1).toFixed(1)}, y<0.3)`, [gapX - 0.5, 0.0005, bz - 1.0], [gapX + 0.5, 0.3, bz + 1.0]));
+  // race loop legs (RACE in room.js): north aisle, its west end short of the pillar, east-end turn between the bench end and the cabin sill, west-end turn
+  corridor("race: north aisle (x -5.6..6.35, z -4.0..-2.4, y<0.3)", [-5.6, 0.0005, -4.0], [6.35, 0.3, -2.4], undefined, true);
+  corridor("race: north aisle west end (x -6.7..-5.6, z -3.3..-2.4, y<0.3)", [-6.7, 0.0005, -3.3], [-5.6, 0.3, -2.4], undefined, true);
+  corridor(`race: east-end turn (x ${(benchEast + 0.05).toFixed(2)}..6.35, z -3.2..0, y<0.3)`, [benchEast + 0.05, 0.0005, -3.2], [6.35, 0.3, 0], undefined, true);
+  corridor("race: west-end turn (x -7.7..-6.7, z -3.3..-2.3, y<0.3)", [-7.7, 0.0005, -3.3], [-6.7, 0.3, -2.3], undefined, true);
   // clutter must stay under the desktops: nothing but chairs/legs/towers may poke into the aisles beyond the desk-edge line
   // (pieces inside the bench run and within a chair's reach, 0.85 m, of a bench centreline; free-standing floor plants are elsewhere)
   const aisleGap = solids.filter(({ e, bb }) => ["storage", "cable", "desk-item", "plant"].includes(e.tag) && bb.min[0] > X0 && bb.max[0] < X0 + 9.6 && bb.max[1] < 0.75 &&
     room.BENCH_Z.some((bz) => Math.abs(e.pos[2] - bz) < 0.85) && room.BENCH_Z.every((bz) => bb.min[2] > bz + 0.6 + 1e-6 || bb.max[2] < bz - 0.6 - 1e-6));
   if (aisleGap.length) fail(`${aisleGap.length} under-desk clutter pieces protrude beyond the desktop footprint: ${[...new Set(aisleGap.map((h) => h.e.tag + "@" + h.e.pos.map((n) => n.toFixed(2))))].slice(0, 5).join(" ")}`);
   else ok("under-desk clutter (storage, cable, desk-item, plant) stays inside the desktop footprints");
+  // race dressing (checkered strip, chevrons) is carpet-tagged and must stay within 4 mm of the floor (≤ 3 mm above the tile rows)
+  const dressing = solids.filter(({ e, bb }) => e.tag === "carpet" && bb.max[1] > 0.0035);
+  const tall = dressing.filter(({ bb }) => bb.max[1] > 0.004 + 1e-6);
+  if (tall.length) fail(`${tall.length} carpet dressing pieces rise above 4 mm (max ${Math.max(...tall.map((d) => d.bb.max[1])).toFixed(4)})`);
+  else ok(`race dressing: ${dressing.length} carpet pieces (start strip, chevrons) all ≤ 4 mm above the slab`);
 }
 
 // ---------- race data contract (both rooms): grid, ordered checkpoints on driveable surfaces, minimap outline ----------
@@ -241,6 +254,38 @@ if (!fallback && room.BENCH_Z) {
       const bad = minimap.walls.filter((w) => !Array.isArray(w) || w.length !== 4 || !fin(w) || w[0] < x0 - 0.01 || w[2] < x0 - 0.01 || w[0] > x1 + 0.01 || w[2] > x1 + 0.01 || w[1] < z0 - 0.01 || w[3] < z0 - 0.01 || w[1] > z1 + 0.01 || w[3] > z1 + 0.01);
       if (bad.length) fail(`RACE.minimap: ${bad.length} wall segments malformed or outside bounds`);
       else ok(`RACE.minimap: ${minimap.walls.length} wall segments inside bounds [${minimap.bounds.join(", ")}]`);
+    }
+    // racing line: dense, on carpet, inside the floor race corridors, ≥ 0.15 m from anything a car can hit, through every checkpoint
+    const line = RACE.line;
+    if (!Array.isArray(line) || line.length < 20) fail(`RACE.line must be a dense polyline (≥ 20 points), found ${line && line.length}`);
+    else {
+      const floorBoxes = CORRIDORS.filter((c) => c.floor).map((c) => c.bb);
+      const hittable = solids.filter(({ e, bb }) => e.tag !== "carpet" && bb.min[1] < 0.3 && bb.max[1] > 0);
+      let minClear = Infinity, clearAt = null, outside = [], offSurface = 0, badSpeed = 0, minGap = Infinity, maxGap = 0, minSpeed = 1, maxSpeed = 0;
+      line.forEach((p, i) => {
+        if (!Array.isArray(p.pos) || p.pos.length !== 3 || !fin(p.pos) || !(p.speed >= 0 && p.speed <= 1)) { badSpeed++; return; }
+        const [x, y, z] = p.pos;
+        minSpeed = Math.min(minSpeed, p.speed); maxSpeed = Math.max(maxSpeed, p.speed);
+        const sup = topUnder(x, z, y + 0.005, 0.03);
+        if (sup.y === -Infinity || sup.e.tag !== "carpet" || Math.abs(sup.y - y) > 0.005) offSurface++;
+        if (!floorBoxes.some((bb) => x >= bb.min[0] - 1e-6 && x <= bb.max[0] + 1e-6 && z >= bb.min[2] - 1e-6 && z <= bb.max[2] + 1e-6)) outside.push(i);
+        for (const { bb } of hittable) {
+          const dx = Math.max(bb.min[0] - x, 0, x - bb.max[0]), dz = Math.max(bb.min[2] - z, 0, z - bb.max[2]);
+          const d = Math.hypot(dx, dz);
+          if (d < minClear) { minClear = d; clearAt = { i, tag: hittable.find((h) => h.bb === bb).e.tag }; }
+        }
+        const n = line[(i + 1) % line.length].pos;
+        const g = Math.hypot(x - n[0], z - n[2]);
+        minGap = Math.min(minGap, g); maxGap = Math.max(maxGap, g);
+      });
+      const missed = checkpoints.filter((c) => !line.some((p) => Math.hypot(p.pos[0] - c.pos[0], p.pos[2] - c.pos[2]) <= c.radius));
+      if (badSpeed) fail(`RACE.line: ${badSpeed} points with bad pos or speed outside 0–1`);
+      if (offSurface) fail(`RACE.line: ${offSurface} points not on carpet within 5 mm`);
+      if (outside.length) fail(`RACE.line: ${outside.length} points outside the race corridors (first at [${outside[0]}] ${JSON.stringify(line[outside[0]].pos)})`);
+      if (minClear < 0.15) fail(`RACE.line: point [${clearAt.i}] is only ${minClear.toFixed(3)} m from ${clearAt.tag} (want ≥ 0.15)`);
+      if (minGap < 0.25 || maxGap > 0.75) fail(`RACE.line: point spacing ${minGap.toFixed(2)}..${maxGap.toFixed(2)} m (want about 0.5)`);
+      if (missed.length) fail(`RACE.line misses ${missed.length} checkpoint disc(s): ${missed.map((c) => JSON.stringify(c.pos)).join(" ")}`);
+      if (!fails) ok(`RACE.line: ${line.length} points every ${minGap.toFixed(2)}–${maxGap.toFixed(2)} m on carpet inside the corridors, min clearance ${minClear.toFixed(2)} m to ${clearAt.tag}, speeds ${minSpeed}–${maxSpeed}, passes all ${checkpoints.length} checkpoints`);
     }
   }
 }

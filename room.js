@@ -383,6 +383,74 @@ export const ROUTE = {
   cups: [CUP_SQUARE[0], 0, CUP_SQUARE[1]],
 };
 
+// ---------- race line + race dressing ----------
+// Racing line for the AI opponents: the loop's corners rounded with tangent arcs, resampled about every
+// LINE_STEP metres, each point carrying a target speed 0–1 (fraction of max) from local curvature, ramped
+// down ahead of each turn and up out of it. corners = [[x, z, radius], ...] in driving order (closed).
+// Shared verbatim with room.fallback.js. check-room.mjs asserts every point is on carpet, inside the race
+// corridors and >= 0.15 m from furniture, and that the line passes through every checkpoint disc.
+const LINE_STEP = 0.5;
+const raceLine = (corners, start) => {
+  const n = corners.length, dense = [];
+  for (let i = 0; i < n; i++) {
+    const [px, pz] = corners[(i + n - 1) % n], [cx, cz, r] = corners[i], [qx, qz] = corners[(i + 1) % n];
+    let ax = cx - px, az = cz - pz, bx = qx - cx, bz = qz - cz;
+    const la = Math.hypot(ax, az), lb = Math.hypot(bx, bz);
+    ax /= la; az /= la; bx /= lb; bz /= lb;
+    const turn = Math.atan2(ax * bz - az * bx, ax * bx + az * bz); // signed corner angle
+    const t = r * Math.tan(Math.abs(turn) / 2); // corner → tangent point distance
+    const sg = Math.sign(turn), ox = cx - ax * t - az * r * sg, oz = cz - az * t + ax * r * sg; // arc centre
+    const phi0 = Math.atan2(cz - az * t - oz, cx - ax * t - ox);
+    const k = Math.max(2, Math.ceil((r * Math.abs(turn)) / (LINE_STEP / 2)));
+    for (let j = 0; j <= k; j++) { const phi = phi0 + (turn * j) / k; dense.push([ox + r * Math.cos(phi), oz + r * Math.sin(phi)]); }
+  }
+  // resample the closed dense polyline at an exactly uniform step (total length / N), then rotate so the
+  // first point is the start line
+  const seg = dense.map((a, i) => { const b = dense[(i + 1) % dense.length]; return Math.hypot(b[0] - a[0], b[1] - a[1]); });
+  const total = seg.reduce((a, b) => a + b, 0), count = Math.max(8, Math.round(total / LINE_STEP)), step = total / count;
+  const pts = [];
+  let carry = 0;
+  for (let i = 0; i < dense.length && pts.length < count; i++) {
+    const a = dense[i], b = dense[(i + 1) % dense.length], L = seg[i];
+    let d = carry;
+    while (d < L - 1e-9 && pts.length < count) { const u = d / L; pts.push([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u]); d += step; }
+    carry = d - L;
+  }
+  let first = 0, best = Infinity;
+  pts.forEach((p, i) => { const d = Math.hypot(p[0] - start[0], p[1] - start[1]); if (d < best) { best = d; first = i; } });
+  const loop = pts.slice(first).concat(pts.slice(0, first)), m = loop.length;
+  const speed = loop.map((p, i) => {
+    const prev = loop[(i + m - 1) % m], next = loop[(i + 1) % m];
+    const h0 = Math.atan2(p[1] - prev[1], p[0] - prev[0]), h1 = Math.atan2(next[1] - p[1], next[0] - p[0]);
+    const dh = Math.abs(Math.atan2(Math.sin(h1 - h0), Math.cos(h1 - h0)));
+    return Math.max(0.4, Math.min(1, 1 - dh * 0.7)); // 0.83 rad per step on a 0.6 m radius → 0.42
+  });
+  for (let pass = 0; pass < 2; pass++) { // brake before the turn, pull away gradually; two passes so the wrap settles
+    for (let i = m - 1; i >= 0; i--) speed[i] = Math.min(speed[i], speed[(i + 1) % m] + 0.12);
+    for (let i = 0; i < m; i++) speed[i] = Math.min(speed[i], speed[(i + m - 1) % m] + 0.2);
+  }
+  return loop.map((p, i) => ({ pos: [+p[0].toFixed(3), 0, +p[1].toFixed(3)], speed: +speed[i].toFixed(2) }));
+};
+const START_X = -5.6; // start/finish line on the spawn aisle (checkpoint 0)
+const NORTH_Z = -3.1; // racing line along the north aisle: 0.3 m clear of the north pillar (z -3.8..-3.4)
+const WEST_X = -7.3; // racing line along the west wall: 0.65 m west of the ramp's foot fillet
+
+// Race dressing as carpet-tagged ROOM data, all within 3 mm of the surface: a checkered start/finish strip
+// across the aisle at START_X (1 mm above the lime stripe) and white direction chevrons on the two aisles
+// every ~2.4 m (two thin bars rotated ±45° about Y, meeting at the tip; ?detail=low drops the chevrons).
+const DRESS_TOP = 0.004;
+for (let i = 0; i < 3; i++) for (let j = 0; j < 16; j++)
+  carpetPiece(START_X - 0.1 + i * 0.1, -0.75 + j * 0.1, 0.1, 0.1, (i + j) % 2 ? PALETTE.chair : PALETTE.desktop, DRESS_TOP);
+const chevron = (x, z, dir) => {
+  const arm = 0.2;
+  for (const side of [-1, 1])
+    add([x - (dir * arm) / 2, DRESS_TOP - 0.0505, z + (side * arm) / 2], [arm * Math.SQRT2, 0.101, 0.06], PALETTE.desktop, "carpet", [0, Math.atan2(side, dir), 0]);
+};
+if (HIGH) {
+  for (const x of [-4.4, -2.0, 0.4, 2.8]) chevron(x, 0, 1); // east along the spawn aisle
+  for (const x of [3.6, 1.2, -1.2, -3.6]) chevron(x, NORTH_Z, -1); // west along the north aisle
+}
+
 // ---------- race data (A consumes this; room.fallback.js exports the same shape) ----------
 // Loop choice: a pure FLOOR loop around the driven bench, counter-clockwise on a north-up minimap: east along
 // the spawn aisle (z=0), north past the bench end at the cabins, west along the z=-3.2 aisle, south along the
@@ -405,7 +473,7 @@ export const RACE = {
     { pos: [-7.05, 0.07, 0.16], heading: Math.PI / 2 },
   ],
   checkpoints: [
-    cp(-5.6, 0, 0.6), // start/finish
+    cp(START_X, 0, 0.6), // start/finish
     cp(-2.5, 0, 0.6),
     cp(1.0, 0, 0.6),
     cp(4.4, 0, 0.55),
@@ -414,9 +482,11 @@ export const RACE = {
     cp(1.0, -3.2, 0.6),
     cp(-2.5, -3.2, 0.6),
     cp(-5.8, -3.0, 0.4), // short of the north pillar (x -6.4..-6.0, z -3.8..-3.4)
-    cp(-7.3, -2.2, 0.35), // west-end turn, on the wall side of the ramp approach
-    cp(-7.3, -0.5, 0.4), // straight down the west wall, 0.65 m west of the ramp's foot fillet
+    cp(WEST_X, -2.2, 0.35), // west-end turn, on the wall side of the ramp approach
+    cp(WEST_X, -0.5, 0.4), // straight down the west wall, 0.65 m west of the ramp's foot fillet
   ],
+  // dense racing line (about every 0.5 m) with target speeds: east corners r 0.7 in the 0.84 m bench→cabin gap, west corners r 0.6
+  line: raceLine([[EAST_TURN_X, 0, 0.7], [EAST_TURN_X, NORTH_Z, 0.7], [WEST_X, NORTH_Z, 0.6], [WEST_X, 0, 0.6]], [START_X, 0]),
   // coarse outline for a compact minimap: room, cabin front, the four bench runs, the two pillars
   minimap: {
     bounds: [-W / 2, -D / 2, W / 2, D / 2],
