@@ -327,6 +327,7 @@ async function testRoom(path) {
     const geo = rampGeometry(ROOM, mod);
     const driver = createDriver(demoPhases(geo, SPAWN));
     let demoFailure = null, maxY = 0, label = driver.label, log = [];
+    const demoStart = ctx.time;
     r = drive(ctx, 150, s => { const input = driver.input(carState(car)); if (driver.label !== label) { log.push(`${label} ✓ t=${f3(s.t)} (${f3(s.x)}, ${f3(s.z)})`); label = driver.label; } return input; }, {
       until: () => driver.done,
       watch: s => {
@@ -338,7 +339,8 @@ async function testRoom(path) {
     });
     demoFailure = r.failure || (!r.reached ? `route incomplete, in "${driver.label}" at ${fmt(r.last)}` : null);
     const moved = props.filter((b, i) => Math.hypot(b.translation().x - PROPS[i].pos[0], b.translation().z - PROPS[i].pos[2]) > .05).length;
-    report('k. full demo route (aisle, ramp, desk, descent, cups)', !demoFailure, demoFailure || `${f3(r.last.t)} s total, ${moved}/${PROPS.length} props knocked, ended at ${fmt(r.last)}`);
+    const toppled = props.filter(b => upVector(b.rotation()).y < .7).length; // fell over rather than slid
+    report('k. full demo route (aisle, ramp, desk, descent, cups)', !demoFailure, demoFailure || `${f3(r.last.t - demoStart)} s of driving, ${moved}/${PROPS.length} props knocked (${toppled} toppled, ${moved - toppled} slid upright), ended at ${fmt(r.last)}`);
     if (verbose || demoFailure) log.forEach(l => console.log('    ', l));
   } else {
     for (const name of ['g. descend ramp to floor (reverse)', 'h. turning circle fits the desk lane', 'i. descend ramp nose-first', 'j. route from SPAWN to the desktop', 'k. full demo route (aisle, ramp, desk, descent, cups)']) report(name, false, 'skipped: ascent failed');

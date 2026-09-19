@@ -148,7 +148,16 @@ export function createCar(RAPIER, world, spawn, { handling = DEFAULT_HANDLING } 
     // Handling state shared with the HUD, mesh and tests. vF/vL are vehicle-relative forward/lateral speed;
     // brakeLight 0 off, 1 braking, 2 reversing; visPitch/visRoll are visual-only body squat/lean (radians).
     vF: 0, vL: 0, aF: 0, yawRate: 0, contacts: 0, airborne: false, slipping: false, brakeLight: 0, visPitch: 0, visRoll: 0,
+    // Wheel spin from actual travel (Joyride: spin += vF·dt/wheelR, kept wrapped). wheelSpinDelta is this step's
+    // increment so the renderer can interpolate without wrap problems and clamp the visual rate against aliasing.
+    wheelSpin: 0, wheelSpinDelta: 0,
   };
+}
+// Advance the shared wheel spin from the forward speed of this step.
+function spinWheels(car) {
+  const delta = car.vF * STEP / CAR.wheelR;
+  car.wheelSpinDelta = delta;
+  car.wheelSpin = wrap(car.wheelSpin + delta);
 }
 
 export function forwardVector(q) {
@@ -215,6 +224,7 @@ function stepClassic(car, input) {
   car.vF = forwardSpeed(car); car.vL = lateralSpeed(car);
   car.contacts = wheelContacts(car).reduce((n, c) => n + c, 0);
   car.brakeLight = braking ? 1 : car.vF < -.05 ? 2 : 0;
+  spinWheels(car);
 }
 
 // Joyride's planar model on top of Rapier's suspension. Order per step: (1) controller suspension update
@@ -258,6 +268,7 @@ function stepJoyride(car, input) {
     car.vF = forwardSpeed(car); car.vL = lateralSpeed(car);
     car.brakeLight = input.brake || input.handbrake ? 1 : car.vF < -J.handbrakeCreep ? 2 : 0;
     car.visPitch -= car.visPitch * kv; car.visRoll -= car.visRoll * kv;
+    spinWheels(car);
     return;
   }
   car.airborne = false;
@@ -315,6 +326,7 @@ function stepJoyride(car, input) {
   // Visual only: the body squats under power and leans out of a corner.
   car.visPitch = clamp(car.visPitch + (aF * J.visPitchPerAccel - car.visPitch) * kv, -J.visClamp, J.visClamp);
   car.visRoll = clamp(car.visRoll + (yawRate * vF * J.visRollPerAccel - car.visRoll) * kv, -J.visClamp, J.visClamp);
+  spinWheels(car);
 }
 
 export function resetCar(car, spawn) {
@@ -326,7 +338,7 @@ export function resetCar(car, spawn) {
   car.body.resetTorques(true);
   car.steering = 0;
   car.upsideDown = 0;
-  Object.assign(car, { vF: 0, vL: 0, aF: 0, yawRate: 0, contacts: 0, airborne: false, slipping: false, brakeLight: 0, visPitch: 0, visRoll: 0 });
+  Object.assign(car, { vF: 0, vL: 0, aF: 0, yawRate: 0, contacts: 0, airborne: false, slipping: false, brakeLight: 0, visPitch: 0, visRoll: 0, wheelSpin: 0, wheelSpinDelta: 0 });
   for (let i = 0; i < 4; i++) {
     car.controller.setWheelSteering(i, 0);
     car.controller.setWheelEngineForce(i, 0);

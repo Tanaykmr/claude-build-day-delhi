@@ -327,11 +327,17 @@
         const head = new THREE.Mesh(lampBox, headMaterial); head.position.set(sx * .015, -.001, .06); bodyGroup.add(head);
         const tail = new THREE.Mesh(lampBox, tailMaterial); tail.position.set(sx * .016, 0, -.06); bodyGroup.add(tail);
       }
-      // Wheels: tire plus a slightly wider off-white hub disc, one merged vertex-coloured geometry per wheel.
-      const tireGeometry = new THREE.CylinderGeometry(CAR.wheelR, CAR.wheelR, CAR.wheelWidth, 14).rotateZ(Math.PI / 2); // axle = local X
-      const hubGeometry = new THREE.CylinderGeometry(CAR.wheelR * .55, CAR.wheelR * .55, CAR.wheelWidth * 1.08, 10).rotateZ(Math.PI / 2);
-      const wheelGeometry = BufferGeometryUtils.mergeGeometries([tinted(tireGeometry, TIRE), tinted(hubGeometry, HUB)], false);
+      // Wheels: a rotationally symmetric, smooth-shaded tire and hub (so the spin itself is invisible and cannot
+      // strobe: at 1.2 m/s a 14 mm tire turns 13.6 rev/s, 82° per physics step, and a flat-shaded 14-facet cylinder
+      // read as a jerky wagon wheel), plus dark cross spokes on the hub that carry the rotation cue at the clamped
+      // visual rate below. One merged vertex-coloured geometry per wheel, its own smooth material.
+      const tireGeometry = new THREE.CylinderGeometry(CAR.wheelR, CAR.wheelR, CAR.wheelWidth, 24).rotateZ(Math.PI / 2); // axle = local X
+      const hubGeometry = new THREE.CylinderGeometry(CAR.wheelR * .55, CAR.wheelR * .55, CAR.wheelWidth * 1.08, 16).rotateZ(Math.PI / 2);
+      const spokeA = new THREE.BoxGeometry(CAR.wheelWidth * 1.14, CAR.wheelR * .18, CAR.wheelR * .95);
+      const spokeB = spokeA.clone().rotateX(Math.PI / 2);
+      const wheelGeometry = BufferGeometryUtils.mergeGeometries([tinted(tireGeometry, TIRE), tinted(hubGeometry, HUB), tinted(spokeA, TRIM), tinted(spokeB, TRIM)], false);
       wheelGeometry.computeVertexNormals();
+      const wheelMaterial = LIGHTING ? new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .6, metalness: .05 }) : new THREE.MeshLambertMaterial({ vertexColors: true });
       // Cheap grounding shadow: a soft dark ellipse laid on whatever surface is under the car (ray cast down).
       const blobCanvas = document.createElement('canvas'); blobCanvas.width = blobCanvas.height = 128;
       const blobContext = blobCanvas.getContext('2d');
@@ -360,7 +366,7 @@
       }
       const wheelMeshes = WHEELS.map(() => {
         const pivot = new THREE.Group();
-        const tire = new THREE.Mesh(wheelGeometry, carMaterial);
+        const tire = new THREE.Mesh(wheelGeometry, wheelMaterial);
         tire.castShadow = shadows;
         pivot.add(tire); carMesh.add(pivot);
         return { pivot, tire };
@@ -428,12 +434,28 @@
       function capturePoses(list) {
         bodies.forEach((body, i) => { list[i].p.copy(body.translation()); list[i].q.copy(body.rotation()); });
       }
-      function resetPoses() { capturePoses(currPose); prevPose.forEach((pose, i) => { pose.p.copy(currPose[i].p); pose.q.copy(currPose[i].q); }); }
+      // Wheel visuals step at 60 Hz too, so they get the same previous/current treatment: suspension length per
+      // wheel, steering angle, and a visual spin whose per-step increment is clamped to VISUAL_SPIN_MAX (4 rev/s;
+      // faster than that a real wheel is a blur, and an unclamped 13.6 rev/s aliases against any frame rate).
+      const VISUAL_SPIN_MAX = 4 * 2 * Math.PI * STEP; // rad per fixed step
+      const wheelVis = { suspPrev: WHEELS.map(() => CAR.suspRest), suspCurr: WHEELS.map(() => CAR.suspRest), steerPrev: 0, steerCurr: 0, spin: 0, spinDelta: 0 };
+      function captureWheels() {
+        for (let i = 0; i < 4; i++) wheelVis.suspCurr[i] = car.controller.wheelSuspensionLength(i) ?? CAR.suspRest;
+        wheelVis.steerCurr = car.steering;
+        wheelVis.spinDelta = Math.max(-VISUAL_SPIN_MAX, Math.min(VISUAL_SPIN_MAX, car.wheelSpinDelta));
+        wheelVis.spin = (wheelVis.spin + wheelVis.spinDelta) % (2 * Math.PI);
+      }
+      function resetPoses() {
+        capturePoses(currPose); prevPose.forEach((pose, i) => { pose.p.copy(currPose[i].p); pose.q.copy(currPose[i].q); });
+        captureWheels(); wheelVis.suspPrev = [...wheelVis.suspCurr]; wheelVis.steerPrev = wheelVis.steerCurr; wheelVis.spinDelta = 0;
+      }
       function recover() { clearInput(); resetCar(car, SPAWN); resetPoses(); snapCamera = true; }
       function step() {
         advanceScript();
         if (resetRequested) recover();
         prevPose.forEach((pose, i) => { pose.p.copy(currPose[i].p); pose.q.copy(currPose[i].q); });
+        for (let i = 0; i < 4; i++) wheelVis.suspPrev[i] = wheelVis.suspCurr[i];
+        wheelVis.steerPrev = wheelVis.steerCurr;
         if (demo && demo.done) { demo = null; subtitle.textContent = 'A little car. A familiar office.'; }
         stepVehicle(car, demo ? demo.input(carState(car)) : {
           throttle: Number(down('KeyW', 'ArrowUp')) - Number(down('KeyS', 'ArrowDown')),
@@ -443,7 +465,7 @@
         });
         world.step();
         simTime += STEP;
-        capturePoses(currPose);
+        capturePoses(currPose); captureWheels();
         if (!validBody(car.body) || props.some(p => !validBody(p.body))) throw new Error('Physics became non-finite. Reload for a clean simulation.');
         if (needsRecovery(car, floorBounds.isEmpty() ? roomBounds : floorBounds)) recover();
       }
@@ -458,11 +480,13 @@
         tailMaterial.emissiveIntensity = car.brakeLight ? 2.2 : .15;
         forward.set(0, 0, 1).applyQuaternion(renderQuat);
         if (Math.hypot(forward.x, forward.z) > .1) carHeading = Math.atan2(forward.x, forward.z);
+        const steer = wheelVis.steerPrev + (wheelVis.steerCurr - wheelVis.steerPrev) * alpha;
+        const spin = wheelVis.spin - wheelVis.spinDelta * (1 - alpha); // back off part of the last increment: no wrap seam
         wheelMeshes.forEach(({ pivot, tire }, i) => {
           const [x, y, z] = WHEELS[i];
-          pivot.position.set(x, y - (car.controller.wheelSuspensionLength(i) ?? CAR.suspRest), z);
-          pivot.rotation.y = car.controller.wheelSteering(i) || 0;
-          tire.rotation.x = -(car.controller.wheelRotation(i) || 0);
+          pivot.position.set(x, y - (wheelVis.suspPrev[i] + (wheelVis.suspCurr[i] - wheelVis.suspPrev[i]) * alpha), z);
+          pivot.rotation.y = i < 2 ? steer : 0;
+          tire.rotation.x = -spin;
         });
         props.forEach(({ mesh }, i) => {
           mesh.position.lerpVectors(prevPose[i + 1].p, currPose[i + 1].p, alpha);
@@ -520,7 +544,7 @@
       });
       const meter = document.querySelector('#meter'), diagnostics = document.querySelector('#diagnostics');
       const debug = params.has('debug'); // The panel stays hidden until its first sample so it never renders as an empty box.
-      let sampleTime = 0, frames = 0;
+      let sampleTime = 0, frames = 0, stepHist = [0, 0, 0, 0, 0, 0, 0], stepMs = 0, stepCount = 0;
       world.step(); // Populate the query pipeline before the first suspension ray cast.
       // Debug hook: ?preroll=seconds advances the simulation (and any ?script) before the first frame.
       const preroll = Math.min(120, Number(params.get('preroll')) || 0);
@@ -570,7 +594,10 @@
           if (!paused) {
             accumulator += dt;
             let steps = 0;
+            const t0 = performance.now();
             while (accumulator >= STEP && steps < 6) { step(); accumulator -= STEP; steps++; }
+            if (steps) { stepMs += performance.now() - t0; stepCount += steps; }
+            stepHist[steps]++;
             if (steps === 6) accumulator = 0;
             syncMeshes(accumulator / STEP); updateCamera(dt);
           }
@@ -581,9 +608,9 @@
             if (debug) {
               diagnostics.hidden = false;
               const p = car.body.translation();
-              diagnostics.textContent = `${Math.round(frames / sampleTime)} fps · ${renderer.info.render.calls} draws\n${renderer.info.render.triangles} triangles · ${ROOM.length} fixed · ${PROPS.length} props\nposition ${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)}\nwheel contacts ${WHEELS.map((_, i) => +car.controller.wheelIsInContact(i)).join(' ')}\nhandling ${handling} · vF ${car.vF.toFixed(2)} vL ${car.vL.toFixed(2)}${car.slipping ? ' sliding' : ''}${car.airborne ? ' airborne' : ''}\ncamera clip ${camState.clip.toFixed(2)} lift ${camState.lift.toFixed(2)}${camState.blocked ? ' blocked' : ''}`;
+              diagnostics.textContent = `${Math.round(frames / sampleTime)} fps · ${renderer.info.render.calls} draws\n${renderer.info.render.triangles} triangles · ${ROOM.length} fixed · ${PROPS.length} props\nposition ${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)}\nwheel contacts ${WHEELS.map((_, i) => +car.controller.wheelIsInContact(i)).join(' ')}\nhandling ${handling} · vF ${car.vF.toFixed(2)} vL ${car.vL.toFixed(2)}${car.slipping ? ' sliding' : ''}${car.airborne ? ' airborne' : ''}\ncamera clip ${camState.clip.toFixed(2)} lift ${camState.lift.toFixed(2)}${camState.blocked ? ' blocked' : ''}\nrAF ${Math.round(frames / sampleTime)} Hz · steps/frame 0:${stepHist[0]} 1:${stepHist[1]} 2:${stepHist[2]}${stepHist.slice(3).some(Boolean) ? ` 3+:${stepHist.slice(3).reduce((a, b) => a + b, 0)}` : ''} · physics ${stepCount ? (stepMs / stepCount).toFixed(2) : '–'} ms/step`;
             }
-            frames = 0; sampleTime = 0;
+            frames = 0; sampleTime = 0; stepHist.fill(0); stepMs = 0; stepCount = 0;
           }
           requestAnimationFrame(frame);
         } catch (error) { showError(error); }
