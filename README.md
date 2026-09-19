@@ -46,15 +46,23 @@ Debug automation on the live page (A track): `?cam=x,y,z`, `?spawn=x,y,z,heading
 
 ## Analytics
 
-Google Analytics 4 is wired into `index.html` but off until you give it an ID. Paste your Measurement ID into
-`window.GA_ID` (the `<script>` just under `<title>`) and deploy:
+Vercel Web Analytics, via the script tag under `<title>` in `index.html`:
 
-```js
-window.GA_ID = 'G-XXXXXXXXXX';
+```html
+<script defer src="/_vercel/insights/script.js"></script>
 ```
 
-Empty, or on `localhost`, nothing is fetched and no cookie is set, so the headless checks and local runs stay clean.
-GA4 sends `page_view` by itself; a custom event is one call, e.g. `gtag?.('event', 'race_finished', { seconds })`.
+Turn it on once in the Vercel dashboard (project → Analytics → Enable). Page views are collected from then on,
+no ID to paste. `/_vercel/insights/` only exists on Vercel, so the request 404s locally and on any other host
+and nothing is sent — the headless checks stay clean.
+
+There is no bundler here, so `@vercel/analytics` is not used: the package exists to inject this exact script,
+and importing it would mean adding a build step to save a line. Custom events are one fetch:
+
+```js
+fetch('/_vercel/insights/event', { method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ name: 'race_finished', data: { seconds } }) });
+```
 
 ## Headless checks
 
