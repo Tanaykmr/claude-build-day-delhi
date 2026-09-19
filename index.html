@@ -29,6 +29,7 @@
     #actions { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
     #actions[hidden] { display: none; }
     #diagnostics { position: fixed; top: 115px; left: 24px; white-space: pre; font: 12px monospace; pointer-events: none; }
+    .strip-label { position: fixed; font: 12px monospace; color: #fff; background: #0009; padding: 2px 6px; pointer-events: none; }
     @media (max-width: 650px) { header, footer { left: 12px; right: 12px; } footer { flex-wrap: wrap; } .panel { padding: 10px 12px; } }
   </style>
   <script type="importmap">
@@ -121,6 +122,12 @@
       const spawnOverride = (params.get('spawn') || '').split(',').map(Number);
       if (spawnOverride.length === 4 && spawnOverride.every(Number.isFinite)) SPAWN = { pos: spawnOverride.slice(0, 3), heading: spawnOverride[3] };
       validateData(ROOM, SPAWN, PROPS);
+      // Debug hook: ?strip=N,dt renders N frames spaced dt simulation-seconds apart into one grid (a
+      // filmstrip) so a single screenshot shows motion of the car AND the chase camera. Composes with
+      // ?script/?demo/?spawn/?preroll/?cam. The live loop does not run afterwards; the grid stays on screen.
+      const stripArg = (params.get('strip') || '').split(',').map(Number);
+      const strip = stripArg.length === 2 && stripArg.every(Number.isFinite) && stripArg[0] >= 1
+        ? { frames: Math.min(64, Math.round(stripArg[0])), dt: Math.max(STEP, stripArg[1]) } : null;
       detail.textContent = 'Loading renderer and physics…';
       [THREE, { default: RAPIER }] = await Promise.all([
         import('three'), import('https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.14.0/+esm'),
@@ -299,8 +306,8 @@
       let demo = params.has('demo') && geometry ? createDriver(demoPhases(geometry, SPAWN)) : null;
       const subtitle = document.querySelector('.subtitle');
       if (demo) subtitle.textContent = 'Demo route playing · press any driving key to take over';
-      let resetRequested = false, paused = (script.length || demo) ? false : document.hidden || !document.hasFocus();
-      let accumulator = 0, lastTime = null, snapCamera = true;
+      let resetRequested = false, paused = (script.length || demo || strip) ? false : document.hidden || !document.hasFocus();
+      let accumulator = 0, lastTime = null, snapCamera = true, simTime = 0;
       function clearInput() { held.clear(); resetRequested = false; }
       function setPaused(value) {
         clearInput(); paused = value; accumulator = 0; lastTime = null;
@@ -337,6 +344,7 @@
           brake: down('Space'),
         });
         world.step();
+        simTime += STEP;
         if (!validBody(car.body) || props.some(p => !validBody(p.body))) throw new Error('Physics became non-finite. Reload for a clean simulation.');
         if (needsRecovery(car, floorBounds.isEmpty() ? roomBounds : floorBounds)) recover();
       }
@@ -390,6 +398,40 @@
       for (let i = 0; i < Math.round(preroll / STEP); i++) step();
       syncMeshes(); updateCamera(0);
       setPaused(paused);
+      // Filmstrip: advance the fixed-step sim (and the camera at the fixed step, as a 60 Hz display would)
+      // between cells, render each cell once into its own region of an offscreen target, then blit that target
+      // to the canvas every frame. (A canvas drawn once outside the regular loop is not what headless Chrome
+      // captures; blitting each frame behaves exactly like normal rendering.)
+      function renderStrip() {
+        const cols = Math.ceil(Math.sqrt(strip.frames)), rows = Math.ceil(strip.frames / cols);
+        const W = innerWidth, H = innerHeight, cw = Math.floor(W / cols), ch = Math.floor(H / rows), pr = renderer.getPixelRatio();
+        document.querySelectorAll('header, footer').forEach(e => { e.style.display = 'none'; }); // author CSS sets display:flex, so [hidden] alone would not win
+        const target = new THREE.WebGLRenderTarget(Math.round(W * pr), Math.round(H * pr), { samples: 4, type: THREE.HalfFloatType });
+        target.scissorTest = true;
+        camera.aspect = cw / ch; camera.updateProjectionMatrix();
+        const stepsPerCell = Math.max(1, Math.round(strip.dt / STEP));
+        for (let i = 0; i < strip.frames; i++) {
+          if (i > 0) for (let k = 0; k < stepsPerCell; k++) { step(); syncMeshes(); updateCamera(STEP); }
+          const col = i % cols, row = Math.floor(i / cols);
+          target.viewport.set(col * cw * pr, (H - (row + 1) * ch) * pr, cw * pr, ch * pr); target.scissor.copy(target.viewport);
+          renderer.setRenderTarget(target); renderer.render(scene, camera);
+          const label = document.createElement('div');
+          label.className = 'strip-label';
+          label.style.left = `${col * cw + 4}px`; label.style.top = `${row * ch + 4}px`;
+          const p = car.body.translation();
+          label.textContent = `#${i} t=${simTime.toFixed(2)}s v=${forwardSpeed(car).toFixed(2)} pos ${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)} contacts ${WHEELS.map((_, w) => +car.controller.wheelIsInContact(w)).join('')}`;
+          document.body.append(label);
+        }
+        if (debug) { diagnostics.hidden = false; diagnostics.textContent = `filmstrip ${strip.frames} frames × ${strip.dt.toFixed(3)} s · ${renderer.info.render.calls} draws/cell`; }
+        // Tone mapping and sRGB output are applied by this blit (three.js skips both when rendering to a target).
+        const blitScene = new THREE.Scene(), blitCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        blitScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: target.texture })));
+        renderer.setRenderTarget(null);
+        (function present() { renderer.render(blitScene, blitCamera); requestAnimationFrame(present); })();
+      }
+      // Render inside an animation frame so the compositor presents the canvas (a render issued from the boot
+      // microtask never reached the headless screenshot).
+      if (strip) { requestAnimationFrame(() => { try { renderStrip(); } catch (error) { showError(error); } }); return; }
       function frame(now) {
         if (failed) return;
         try {

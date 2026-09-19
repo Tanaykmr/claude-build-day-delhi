@@ -7,7 +7,28 @@
 //   node check-drive.mjs --verbose  # per-0.25 s telemetry
 //   node check-drive.mjs --car '{"stiffness":300}'   # override CAR fields for tuning sweeps
 //   node check-drive.mjs --live --ramp=15            # gentler ramp angle (room.js ?ramp= knob)
+//   node check-drive.mjs --handling=joyride          # select the car.js controller (default: DEFAULT_HANDLING)
+//   node check-drive.mjs --trace                     # motion traces only: per-step CSVs in .traces/ + jitter metrics
+//   node check-drive.mjs --trace=straight,slide      # subset of the trace scenarios (see TRACES below)
 import RAPIER from '@dimforge/rapier3d-compat';
+import { mkdirSync, writeFileSync } from 'node:fs';
+
+// BASELINE jitter metrics, recorded with `--trace --live` at tag baseline-mvp (classic controller, room.js,
+// commit bc407e5 + trace tooling). Units: pos2 = RMS second difference of position per step (mm);
+// yaw2/roll2 = RMS second difference of yaw/roll per step (mrad); dYawRate = max |Δ yaw rate| in one step
+// (rad/s); flicker = number of steps where the wheel-contact pattern changed. Trace runs print the
+// candidate next to these so comparisons stay honest. Filled in by the first trace run; do not hand-edit.
+const BASELINE = {
+  classic: {
+    straight: { pos2: 0.349, tail: 0, yaw2: 0, roll2: 0, dYawRate: 0, flicker: 0 },
+    uturn: { pos2: 0.612, tail: 0.513, yaw2: 1.34, roll2: 0.63, dYawRate: 0.455, flicker: 0 },
+    ramp: { pos2: 0.955, tail: 1.683, yaw2: 0, roll2: 0, dYawRate: 0, flicker: 2 },
+    lane: { pos2: 0.382, tail: 0, yaw2: 0, roll2: 0, dYawRate: 0, flicker: 0 },
+    descent: { pos2: 0.653, tail: 0.79, yaw2: 0.03, roll2: 0.11, dYawRate: 0.01, flicker: 2 },
+    reverse: { pos2: 0.897, tail: 1.228, yaw2: 1.04, roll2: 1.38, dYawRate: 0.401, flicker: 0 },
+    slide: { pos2: 0.466, tail: 0.038, yaw2: 1.46, roll2: 0.68, dYawRate: 0.455, flicker: 0 },
+  },
+};
 
 const argv = process.argv.slice(2);
 const rampArg = argv.find(a => a.startsWith('--ramp='));
@@ -15,13 +36,16 @@ if (rampArg) globalThis.location = { search: `?ramp=${rampArg.slice(7)}` }; // r
 const carArg = argv.indexOf('--car');
 if (carArg >= 0) globalThis.CAR_OVERRIDE = JSON.parse(argv[carArg + 1]);
 const {
-  CAR, STEP, createWorld, createCar, roomColliderDesc, stepVehicle, resetCar, forwardSpeed,
+  CAR, STEP, createWorld, createCar, roomColliderDesc, stepVehicle, resetCar, forwardSpeed, lateralSpeed, pitchRoll,
   heading, upVector, wheelContacts, validBody, needsRecovery, headingQuaternion,
   rampGeometry, demoPhases, createDriver, carState,
 } = await import('./car.js');
 
 const args = new Set(argv);
 const verbose = args.has('--verbose');
+const handling = argv.find(a => a.startsWith('--handling='))?.slice(11) || 'classic';
+const traceArg = argv.find(a => a === '--trace' || a.startsWith('--trace='));
+const traceNames = traceArg ? (traceArg.includes('=') ? traceArg.slice(8).split(',').filter(Boolean) : null) : undefined;
 const rooms = args.has('--live') ? ['./room.js'] : args.has('--fallback') ? ['./room.fallback.js'] : ['./room.js', './room.fallback.js'];
 const wrap0 = a => Math.atan2(Math.sin(a), Math.cos(a));
 const f3 = n => (Math.round(n * 1000) / 1000).toFixed(3);
@@ -48,9 +72,10 @@ function buildWorld(ROOM, PROPS = []) {
 }
 
 function snapshot(car) {
-  const p = car.body.translation(), q = car.body.rotation(), v = car.body.linvel();
-  return { x: p.x, y: p.y, z: p.z, speed: Math.hypot(v.x, v.z), vy: v.y, fwd: forwardSpeed(car),
-    heading: heading(q), up: upVector(q).y, contacts: wheelContacts(car) };
+  const p = car.body.translation(), q = car.body.rotation(), v = car.body.linvel(), w = car.body.angvel();
+  const { pitch, roll } = pitchRoll(q);
+  return { x: p.x, y: p.y, z: p.z, speed: Math.hypot(v.x, v.z), vy: v.y, fwd: forwardSpeed(car), vL: lateralSpeed(car),
+    heading: heading(q), yawRate: w.y, pitch, roll, up: upVector(q).y, steer: car.steering, contacts: wheelContacts(car) };
 }
 const fmt = s => `t=${f3(s.t)} pos=(${f3(s.x)}, ${f3(s.y)}, ${f3(s.z)}) fwd=${f3(s.fwd)} vy=${f3(s.vy)} m/s up=${f3(s.up)} hdg=${f3(s.heading)} contacts=${s.contacts.join('')}`;
 
@@ -69,6 +94,7 @@ function drive(ctx, seconds, input, { until, watch } = {}) {
     if (needsRecovery(car, bounds)) { failure = `recovery would trigger at ${fmt({ ...snapshot(car), t: ctx.time })}`; break; }
     last = { ...snapshot(car), t: ctx.time };
     minUp = Math.min(minUp, last.up);
+    if (ctx.trace) ctx.trace.push(last);
     if (verbose && i % 15 === 0) console.log('   ', fmt(last));
     if (watch) { failure = watch(last); if (failure) break; }
     if (until && until(last)) { reached = true; break; }
@@ -93,7 +119,7 @@ async function testRoom(path) {
   const live = path === './room.js';
   const { PROPS } = live ? await import('./props.js') : { PROPS: [] };
   const { world, bounds, props } = buildWorld(ROOM, PROPS);
-  const car = createCar(RAPIER, world, SPAWN);
+  const car = createCar(RAPIER, world, SPAWN, { handling });
   const ctx = { world, car, bounds, time: 0 };
   console.log(`    ${ROOM.length} fixed boxes, ${PROPS.length} dynamic props`);
   world.step(); // populate the query pipeline before the first suspension ray cast (as index.html does)
@@ -261,10 +287,91 @@ async function testRoom(path) {
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Motion traces. Screenshots cannot establish smooth handling, so these record every fixed step of a
+// few short, repeatable manoeuvres to CSV and boil each down to jitter metrics (see BASELINE above).
+const TRACES = {
+  straight: { label: 'flat forward 3 s', spawn: (S) => S, run: ctx => drive(ctx, 3, FWD) },
+  uturn: { label: 'forward 1 s then full left at creep 3 s', spawn: (S) => S,
+    run: ctx => { drive(ctx, 1, FWD); return drive(ctx, 3, s => ({ throttle: s.fwd > .5 ? 0 : 1, steer: 1, brake: false })); } },
+  ramp: { label: 'climb the ramp onto the desk', spawn: (S, g) => ({ pos: [g.footX - .75, S.pos[1], g.rampZ], heading: Math.PI / 2 }),
+    run: (ctx, g) => drive(ctx, 7, FWD, { until: s => s.x > g.crestX + .5 }) },
+  lane: { label: 'desk lane forward 2.5 s', spawn: (S, g) => ({ pos: [g.crestX + .7, g.deskTop + S.pos[1] - .04, g.rampZ], heading: Math.PI / 2 }),
+    run: ctx => drive(ctx, 2.5, FWD) },
+  descent: { label: 'nose-first down the ramp 3 s', spawn: (S, g) => ({ pos: [g.crestX + .9, g.deskTop + S.pos[1] - .04, g.rampZ], heading: -Math.PI / 2 }),
+    run: ctx => drive(ctx, 3, FWD) },
+  reverse: { label: 'reverse 2 s', spawn: (S) => S, run: ctx => drive(ctx, 2, REV) },
+  slide: { label: 'forward 2 s, handbrake + full left 0.8 s, release 1.5 s', spawn: (S) => S,
+    run: ctx => { drive(ctx, 2, FWD); drive(ctx, .8, () => ({ throttle: 0, steer: 1, brake: false, handbrake: true })); return drive(ctx, 1.5, IDLE); } },
+};
+const unwrapAngles = a => { const out = [a[0] ?? 0]; for (let i = 1; i < a.length; i++) out.push(out[i - 1] + wrap0(a[i] - a[i - 1])); return out; };
+function jitterMetrics(rows) {
+  const yaw = unwrapAngles(rows.map(r => r.heading));
+  let pos2 = 0, yaw2 = 0, roll2 = 0, n = 0, dYawRate = 0, flicker = 0;
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i].contacts.join('') !== rows[i - 1].contacts.join('')) flicker++;
+    dYawRate = Math.max(dYawRate, Math.abs(rows[i].yawRate - rows[i - 1].yawRate));
+    if (i < 2) continue;
+    const a = rows[i - 2], b = rows[i - 1], c = rows[i];
+    pos2 += (c.x - 2 * b.x + a.x) ** 2 + (c.y - 2 * b.y + a.y) ** 2 + (c.z - 2 * b.z + a.z) ** 2;
+    yaw2 += (yaw[i] - 2 * yaw[i - 1] + yaw[i - 2]) ** 2;
+    roll2 += (c.roll - 2 * b.roll + a.roll) ** 2;
+    n++;
+  }
+  const rms = v => (n ? Math.sqrt(v / n) : 0);
+  // tail = position jitter over the final second only, where the manoeuvre has settled and intended
+  // acceleration no longer dominates the second differences.
+  let tail = 0, nt = 0;
+  for (let i = Math.max(2, rows.length - 60); i < rows.length; i++) {
+    const a = rows[i - 2], b = rows[i - 1], c = rows[i];
+    tail += (c.x - 2 * b.x + a.x) ** 2 + (c.y - 2 * b.y + a.y) ** 2 + (c.z - 2 * b.z + a.z) ** 2; nt++;
+  }
+  return { pos2: rms(pos2) * 1000, tail: (nt ? Math.sqrt(tail / nt) : 0) * 1000, yaw2: rms(yaw2) * 1000, roll2: rms(roll2) * 1000, dYawRate, flicker, steps: rows.length };
+}
+const fmtMetrics = m => `pos2 ${m.pos2.toFixed(3)} mm (tail ${m.tail.toFixed(3)}) · yaw2 ${m.yaw2.toFixed(2)} mrad · roll2 ${m.roll2.toFixed(2)} mrad · dYawRate ${m.dYawRate.toFixed(3)} rad/s · flicker ${m.flicker} · ${m.steps} steps`;
+const CSV_COLUMNS = ['t', 'x', 'y', 'z', 'heading', 'yawRate', 'pitch', 'roll', 'fwd', 'vL', 'steer', 'contacts'];
+function writeTrace(file, rows) {
+  mkdirSync('.traces', { recursive: true });
+  const lines = rows.map(r => CSV_COLUMNS.map(c => (c === 'contacts' ? r.contacts.join('') : (Math.round(r[c] * 1e5) / 1e5))).join(','));
+  writeFileSync(file, [CSV_COLUMNS.join(','), ...lines].join('\n') + '\n');
+}
+
+async function traceRoom(path) {
+  console.log(`\n=== ${path} (traces, handling=${handling}) ===`);
+  const mod = await import(path);
+  const { ROOM, SPAWN } = mod;
+  const live = path === './room.js';
+  const { PROPS } = live ? await import('./props.js') : { PROPS: [] };
+  const { world, bounds } = buildWorld(ROOM, PROPS);
+  const car = createCar(RAPIER, world, SPAWN, { handling });
+  const ctx = { world, car, bounds, time: 0 };
+  world.step();
+  const g = rampGeometry(ROOM, mod);
+  const names = traceNames ?? Object.keys(TRACES);
+  const summary = {};
+  for (const name of names) {
+    const scenario = TRACES[name];
+    if (!scenario) { report(`trace ${name}`, false, `unknown trace; choose from ${Object.keys(TRACES).join(', ')}`); continue; }
+    ctx.trace = null;
+    resetCar(car, scenario.spawn(SPAWN, g)); drive(ctx, 1, IDLE);
+    ctx.trace = [];
+    const r = scenario.run(ctx, g);
+    const rows = ctx.trace; ctx.trace = null;
+    const file = `.traces/${handling}-${live ? 'live' : 'fallback'}-${name}.csv`;
+    writeTrace(file, rows);
+    const m = jitterMetrics(rows);
+    summary[name] = { pos2: +m.pos2.toFixed(3), tail: +m.tail.toFixed(3), yaw2: +m.yaw2.toFixed(2), roll2: +m.roll2.toFixed(2), dYawRate: +m.dYawRate.toFixed(3), flicker: m.flicker };
+    const base = BASELINE.classic[name];
+    const vs = base ? ` | baseline pos2 ${base.pos2} (tail ${base.tail}) · yaw2 ${base.yaw2} · roll2 ${base.roll2} · dYawRate ${base.dYawRate} · flicker ${base.flicker}` : '';
+    report(`trace ${name} (${scenario.label})`, !r.failure && r.minUp > .7, r.failure || `${fmtMetrics(m)}${vs} → ${file}`);
+  }
+  if (live) console.log(`    metrics JSON: ${JSON.stringify(summary)}`);
+}
+
 await RAPIER.init();
-console.log(`Rapier ${RAPIER.version()} · CAR ${JSON.stringify(CAR)}`);
+console.log(`Rapier ${RAPIER.version()} · handling ${handling} · CAR ${JSON.stringify(CAR)}`);
 for (const path of rooms) {
-  try { await testRoom(path); } catch (error) { report(`${path} crashed`, false, error.stack || String(error)); }
+  try { await (traceNames === undefined ? testRoom(path) : traceRoom(path)); } catch (error) { report(`${path} crashed`, false, error.stack || String(error)); }
 }
 const failed = results.filter(r => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed${failed.length ? `; FAILED: ${failed.map(r => r.name).join(', ')}` : ''}`);

@@ -95,9 +95,23 @@ export function heading(q) {
   const f = forwardVector(q);
   return Math.atan2(f.x, f.z);
 }
+// Body-local +X, which is the car's LEFT (heading 0 faces +Z; up × forward = +X).
+export function leftVector(q) {
+  return { x: 1 - 2 * (q.y * q.y + q.z * q.z), y: 2 * (q.x * q.y + q.w * q.z), z: 2 * (q.x * q.z - q.w * q.y) };
+}
 export function forwardSpeed(car) {
   const f = forwardVector(car.body.rotation()), v = car.body.linvel();
   return f.x * v.x + f.y * v.y + f.z * v.z;
+}
+// Signed lateral speed along the body's left axis (+ = sliding toward the car's left).
+export function lateralSpeed(car) {
+  const l = leftVector(car.body.rotation()), v = car.body.linvel();
+  return l.x * v.x + l.y * v.y + l.z * v.z;
+}
+// Pitch (nose up +) and roll (left side up +) of a body quaternion, radians. Used by the motion trace.
+export function pitchRoll(q) {
+  const f = forwardVector(q), l = leftVector(q);
+  return { pitch: Math.asin(clamp(f.y, -1, 1)), roll: Math.asin(clamp(l.y, -1, 1)) };
 }
 
 // input: { throttle: -1..1, steer: -1..1 (+ = left), brake: boolean }
