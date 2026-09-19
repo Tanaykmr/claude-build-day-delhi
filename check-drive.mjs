@@ -40,6 +40,7 @@ const {
   heading, upVector, wheelContacts, validBody, needsRecovery, headingQuaternion,
   rampGeometry, demoPhases, createDriver, carState,
 } = await import('./car.js');
+const { createRace, startCountdown, tickRace, updateProgress, standings, createAIDriver, carAhead, lineSpawn, lineLength } = await import('./race.js');
 
 const args = new Set(argv);
 const verbose = args.has('--verbose');
@@ -344,6 +345,70 @@ async function testRoom(path) {
     if (verbose || demoFailure) log.forEach(l => console.log('    ', l));
   } else {
     for (const name of ['g. descend ramp to floor (reverse)', 'h. turning circle fits the desk lane', 'i. descend ramp nose-first', 'j. route from SPAWN to the desktop', 'k. full demo route (aisle, ramp, desk, descent, cups)']) report(name, false, 'skipped: ascent failed');
+  }
+
+  // (r) race: the room's RACE export consumed through race.js, AI drivers on the same car.js handling as the player.
+  const RACE = mod.RACE;
+  if (!RACE) { for (const name of ['r1. four cars settle on the grid without touching', 'r2. AI cars lap RACE.line', 'r3. checkpoint order']) report(name, false, 'no RACE export'); return; }
+  {
+    const w2 = buildWorld(ROOM, PROPS);
+    const cars = RACE.grid.map(g => createCar(RAPIER, w2.world, g, { handling }));
+    w2.world.step();
+    const stepAll = inputs => { cars.forEach((c, i) => stepVehicle(c, inputs[i])); w2.world.step(); };
+    // (r1) grid: four cars settle for a second without touching or drifting
+    for (let i = 0; i < 60; i++) stepAll(cars.map(IDLE));
+    const drift = cars.map((c, i) => Math.hypot(c.body.translation().x - RACE.grid[i].pos[0], c.body.translation().z - RACE.grid[i].pos[2]));
+    let minGap = Infinity;
+    for (let a = 0; a < cars.length; a++) for (let b = a + 1; b < cars.length; b++) {
+      const pa = cars[a].body.translation(), pb = cars[b].body.translation();
+      minGap = Math.min(minGap, Math.hypot(pa.x - pb.x, pa.z - pb.z));
+    }
+    report('r1. four cars settle on the grid without touching', Math.max(...drift) < .01 && minGap >= CAR.len && cars.every(c => wheelContacts(c).every(Boolean)),
+      `max drift ${f3(Math.max(...drift))} m, closest origins ${f3(minGap)} m (car length ${CAR.len})`);
+
+    // (r2) AI: every car completes lap 1 within the time bound, no teleport recovery, nobody tips
+    const race = createRace(RACE, cars.length);
+    const drivers = cars.map((_, i) => createAIDriver(RACE.line, { pace: 1 - .04 * i }));
+    startCountdown(race, .5);
+    const length = lineLength(RACE.line), bound = 70;
+    let t = 0, failure = null, minUp = 1, recoveries = 0;
+    const lapAt = cars.map(() => null);
+    while (t < bound && lapAt.some(v => v === null)) {
+      const go = tickRace(race, STEP);
+      const states = cars.map(carState);
+      const inputs = cars.map((c, i) => (race.phase === 'racing' ? drivers[i].input(states[i], carAhead(states, i)) : { throttle: 0, steer: 0, brake: true }));
+      stepAll(inputs);
+      t += STEP;
+      cars.forEach((c, i) => {
+        const st = carState(c);
+        minUp = Math.min(minUp, st.up);
+        if (st.up < .7 && !failure) failure = `car ${i} tipped at t=${f3(t)} (${f3(st.x)}, ${f3(st.z)})`;
+        if (race.phase === 'racing') { const ev = updateProgress(race, i, st); if (ev === 'lap' && lapAt[i] === null) lapAt[i] = t; }
+        if (drivers[i].wantsRecovery) { recoveries++; resetCar(c, lineSpawn(RACE.line, drivers[i].nearest)); drivers[i].recovered(); }
+        if (!validBody(c.body) && !failure) failure = `car ${i} became non-finite`;
+      });
+      if (failure) break;
+    }
+    const order = standings(race);
+    const leader = race.cars[order[0]], last = race.cars[order[order.length - 1]];
+    report('r2. AI cars lap RACE.line', !failure && lapAt.every(v => v !== null) && recoveries === 0 && leader.passed >= last.passed,
+      failure || `line ${f3(length)} m; lap 1 at ${lapAt.map(v => (v === null ? '—' : f3(v))).join(' / ')} s (bound ${bound}), stuck nudges ${drivers.map(d => d.stuckCount).join('/')}, recoveries ${recoveries}, minUp ${f3(minUp)}, order ${order.join('>')}`);
+
+    // (r3) checkpoint order: only the NEXT checkpoint counts; skipping one does not advance
+    const solo = createRace(RACE, 1);
+    startCountdown(solo, 0); tickRace(solo, STEP);
+    const at = k => ({ x: RACE.checkpoints[k].pos[0], z: RACE.checkpoints[k].pos[2] });
+    const c0 = solo.cars[0], notes = [];
+    notes.push(updateProgress(solo, 0, at(0)) === 'start' && c0.next === 1 && c0.lap === 0);
+    notes.push(updateProgress(solo, 0, at(2)) === null && c0.next === 1 && c0.passed === 1); // skipped checkpoint 1: no credit
+    notes.push(updateProgress(solo, 0, at(1)) === 'checkpoint' && c0.next === 2);
+    let lastEvent = null;
+    for (let lap = 0; lap < RACE.laps; lap++) {
+      for (let k = c0.next; k < solo.n; k++) lastEvent = updateProgress(solo, 0, at(k));
+      lastEvent = updateProgress(solo, 0, at(0));
+    }
+    notes.push(lastEvent === 'finish' && c0.finished && c0.lap === RACE.laps && c0.lapTimes.length === RACE.laps);
+    report('r3. checkpoint order (skips do not count, laps and finish)', notes.every(Boolean), `start ${notes[0]}, skip ignored ${notes[1]}, next in order ${notes[2]}, ${RACE.laps} laps → finish ${notes[3]}`);
   }
 }
 
