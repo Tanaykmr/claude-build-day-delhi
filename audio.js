@@ -34,8 +34,10 @@
 //   handle.update(car)            → per frame: engine, scrub and the music scheduler.
 //   handle.event(name, { strength, pan }) → beep | go | checkpoint | lap | finish | impact | clatter | land.
 //
-// Mix. Music sits ~12 dB under the engine so it never competes with the thing the player is steering.
-export const MIX = Object.freeze({ master: .45, music: .22, engine: .62, fx: .85, amb: .5 });
+// Mix. Measured at the limiter, not guessed: the music loop is sparse, so matching it to the engine by RMS
+// would make it shout. These levels put its PEAKS about 5 dB under the engine at cruise, which reads as
+// present but still behind the thing the player is steering. .22 left it 31 dB down and inaudible.
+export const MIX = Object.freeze({ master: .92, music: .58, engine: .62, fx: .85, amb: .38 });
 const TAU = .05;            // setTargetAtTime constant: ~95% of the way there in 0.15 s
 const NOISE_SECONDS = 2;
 
@@ -43,11 +45,11 @@ const NOISE_SECONDS = 2;
 // wrapped into three "gears" so the tone climbs, drops on the shift and climbs again (Joyride's trick).
 // An idle burble keeps a stationary car alive: the gain never reaches zero and the filter sits low.
 export const ENGINE = Object.freeze({
-  maxSpeed: 1.2, idleFreq: 96, gears: 3,
+  maxSpeed: 1.2, idleFreq: 120, gears: 3,
   // Each gear climbs by `gearRise`, and every upshift starts `shiftStep` higher than the last, so the tone
   // rises across the whole speed range instead of snapping back to the bottom three times (which read as a siren).
   gearRise: .85, shiftStep: .55,
-  cutoffIdle: 520, cutoffSpan: 2300, gainIdle: .07, gainSpan: .17,
+  cutoffIdle: 620, cutoffSpan: 2300, gainIdle: .09, gainSpan: .22,
   burbleFreq: 5.5, burbleDepth: .022, // slow amplitude wobble at rest, faded out as the car moves off
   whineMul: 4, whineGain: .055,       // electric motor whine, four orders up, led by throttle
   rushFreq: 620, rushQ: .8, rushGain: .09, // broadband air/drivetrain rush, led by speed
@@ -55,7 +57,7 @@ export const ENGINE = Object.freeze({
 // Room tone: lowpassed noise with a slow drift, so a parked car sits in a room rather than in a vacuum.
 // gain is set from a measurement at the master bus, not by ear: white noise through a lowpass this low
 // throws away most of its energy, and the first pass at .085 landed 15 dB under the threshold of notice.
-const AMBIENCE = Object.freeze({ freq: 420, q: .7, gain: .5, driftHz: .06, driftDepth: 120 });
+const AMBIENCE = Object.freeze({ freq: 520, q: .7, gain: .4, driftHz: .06, driftDepth: 140 });
 // Tire scrub / brake squeal: looped noise through a narrow band-pass. Level comes from lateral speed while
 // sliding and from the service brake while stopping, so Space squeals and a handbrake slide scrubs.
 const SCRUB = Object.freeze({ freq: 1250, q: 5, slipFrom: .12, slipSpan: .35, slipGain: .3, brakeGain: .16, brakeFrom: .35 });
@@ -98,8 +100,11 @@ export function createAudio({ onState } = {}) {
   function build(ctx) {
     const master = ctx.createGain();
     master.gain.value = a.muted ? 0 : MIX.master;
-    master.connect(ctx.destination);
-    a.master = master;
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -3; limiter.knee.value = 0; limiter.ratio.value = 20;
+    limiter.attack.value = .003; limiter.release.value = .25;
+    master.connect(limiter); limiter.connect(ctx.destination);
+    a.master = master; a.limiter = limiter;
     a.buses = { music: bus(ctx, a.musicPlaying ? MIX.music : 0), engine: bus(ctx, MIX.engine), fx: bus(ctx, MIX.fx), amb: bus(ctx, MIX.amb) };
 
     // One deterministic white-noise buffer shared by every noise voice and one-shot.
