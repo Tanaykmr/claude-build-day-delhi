@@ -81,8 +81,8 @@ function template({ fallback, raceHref, demoHref, fallbackHref, mapName }) {
               <button class="stm-btn" data-go="briefing">${I.book}<span>Briefing</span></button>
             </div>
             <div class="row rv" style="--i:8">
-              <a class="stm-btn ghost" href="${raceHref}">${I.flag}<span>Race</span></a>
-              <a class="stm-btn ghost" href="${demoHref}">${I.go}<span>Demo lap</span></a>
+              <a class="stm-btn ghost" href="${raceHref}" data-race>${I.flag}<span>Race</span></a>
+              <a class="stm-btn ghost" href="${demoHref}" data-demo>${I.go}<span>Demo lap</span></a>
               <a class="stm-btn ghost" href="${fallbackHref}">${I.grid}<span>${fallback ? 'Full office' : 'Simple room'}</span></a>
               <button class="stm-btn ghost" data-restart hidden>${I.reload}<span>Restart</span></button>
             </div>
@@ -177,7 +177,7 @@ function template({ fallback, raceHref, demoHref, fallbackHref, mapName }) {
               <p>Three laps of the office circuit against three rivals, from a standing grid start with a countdown.</p>
               <ul><li>Three laps, ordered checkpoints</li><li>Three AI rivals on the racing line</li><li>Live lap, position and clock</li><li>Enter starts or retries, F frees the car</li></ul>
             </div>
-            <div class="foot"><span class="eta">Grid start</span><a class="stm-btn" href="${raceHref}">${I.flag}<span>Race</span></a></div>
+            <div class="foot"><span class="eta">Grid start</span><a class="stm-btn" href="${raceHref}" data-race>${I.flag}<span>Race</span></a></div>
           </article>
           <article class="stm-card stm-phase ready rv" style="--i:4">
             <span class="num">03</span>
@@ -436,13 +436,23 @@ function createBackdrop(canvas) {
   };
 }
 
-export function mountMenu({ statusEl = null, onChange = () => {}, audio: game = null } = {}) {
+export function mountMenu({ statusEl = null, onChange = () => {}, audio: game = null, actions = {} } = {}) {
   const params = new URLSearchParams(location.search);
   const fallback = params.has('fallback');
   const currentMapId = params.get('map') || '';
   const currentMap = currentMapId ? listMaps().find(m => m.id === currentMapId) : null;
   const mapName = currentMap?.name || (fallback ? 'Simple room' : 'The Office');
-  const withParams = (changes) => { const p = new URLSearchParams(location.search); for (const [k, v] of Object.entries(changes)) { if (v === null) p.delete(k); else p.set(k, v); } const q = p.toString(); return location.pathname + (q ? `?${q}` : ''); };
+  // MODES are the params that pick what the page does on load. Every link clears all of them before setting
+  // its own, so they can never stack up (?mode=race&demo=1 was reachable by clicking Race then Demo lap).
+  const MODES = ['mode', 'demo', 'menu', 'go', 'nomenu'];
+  const withParams = (changes) => {
+    const p = new URLSearchParams(location.search);
+    for (const k of MODES) p.delete(k);
+    for (const [k, v] of Object.entries(changes)) { if (v === null) p.delete(k); else p.set(k, v); }
+    const q = p.toString();
+    return location.pathname + (q ? `?${q}` : '');
+  };
+  const homeHref = () => { const p = new URLSearchParams(location.search); for (const k of MODES) p.delete(k); const q = p.toString(); return location.pathname + (q ? `?${q}` : ''); };
 
   if (!document.querySelector('link[data-stm-fonts]')) {
     for (const [rel, href, extra] of [
@@ -463,9 +473,9 @@ export function mountMenu({ statusEl = null, onChange = () => {}, audio: game = 
   root.setAttribute('role', 'dialog'); root.setAttribute('aria-modal', 'true'); root.setAttribute('aria-label', 'Snap the Room menu');
   root.innerHTML = template({
     fallback, mapName,
-    raceHref: withParams({ mode: 'race', menu: null, go: null }),
-    demoHref: withParams({ demo: '1', menu: null, go: null }),
-    fallbackHref: fallback ? withParams({ fallback: null, map: null, menu: null, go: null }) : withParams({ fallback: '1', map: null, menu: null, go: null }),
+    raceHref: withParams({ mode: 'race' }),
+    demoHref: withParams({ demo: '1' }),
+    fallbackHref: fallback ? withParams({ fallback: null, map: null }) : withParams({ fallback: '1', map: null }),
   });
   document.body.append(root);
   document.body.classList.add('stm-open');
@@ -535,8 +545,19 @@ export function mountMenu({ statusEl = null, onChange = () => {}, audio: game = 
   $('[data-prev]').addEventListener('click', () => go(index - 1));
   $('[data-next]').addEventListener('click', () => go(index + 1));
   dots.forEach(d => d.addEventListener('click', () => go(Number(d.dataset.dot))));
-  restart.addEventListener('click', () => location.reload());
+  restart.addEventListener('click', () => { location.href = homeHref(); }); // home, not location.reload(): reloading ?mode=race just restarted the race
   $('[data-music]').addEventListener('click', () => music.toggle());
+  // In place, so the page never navigates into a URL whose params suppress this menu.
+  for (const [sel, run] of [['[data-race]', () => actions.race], ['[data-demo]', () => actions.demo]]) {
+    $$(sel).forEach(el => el.addEventListener('click', e => {
+      const fn = run();
+      if (!fn || e.metaKey || e.ctrlKey || e.shiftKey) return; // no handler, or the user asked for a new tab
+      e.preventDefault();
+      if (!ready) { showToast('Still loading the room'); return; }
+      doClose();
+      fn();
+    }));
+  }
   $$('button, a, .stm-phase').forEach(el => el.addEventListener('pointerenter', () => sfx.tick()));
   root.addEventListener('click', e => { if (e.target.closest?.('button, a') && !e.target.closest('[data-primary], [data-drive], [data-generate]')) sfx.tick(); });
 

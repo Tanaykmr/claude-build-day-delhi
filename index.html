@@ -153,6 +153,11 @@
     // URLs skip it and drop straight into the game, so shot.sh and ?demo=1 behave exactly as before.
     const autoStart = ['demo', 'script', 'cam', 'spawn', 'preroll', 'strip', 'mode', 'debug', 'nomenu'].some(k => new URLSearchParams(location.search).has(k));
     let onMenuChange = () => {};
+    // The menu's Race and Demo buttons used to be links to ?mode=race / ?demo=1. Those params are in the
+    // autoStart bypass list, so following one left the page in a state where the menu is never mounted at all:
+    // no way back to the home page, and a refresh dropped you straight back into the race. They run in place
+    // through these instead, the URL stays clean, and the params keep working for scripts and the README.
+    const menuActions = { race: null, demo: null };
     // The audio handle is built here, before the menu mounts, so both sides share ONE mute state and one music
     // owner: menu.js plays its theme while the menu is open and hands over to the gameplay loop on Drive (see the
     // API block at the top of audio.js). No AudioContext exists until the first gesture either way.
@@ -169,7 +174,7 @@
     // ?debug or ?probe exposes the handle so a CDP probe can assert the mute/music state, which no screenshot can
     // show. ?probe is deliberately NOT in the menu's bypass list above: the menu must stay up for a handover probe.
     if (['debug', 'probe'].some(k => new URLSearchParams(location.search).has(k))) window.__audio = audio;
-    const menu = autoStart ? null : mountMenu({ statusEl: document.querySelector('#detail'), onChange: open => onMenuChange(open), audio });
+    const menu = autoStart ? null : mountMenu({ statusEl: document.querySelector('#detail'), onChange: open => onMenuChange(open), audio, actions: menuActions });
 
     function validateData(ROOM, SPAWN, PROPS) {
       if (!Array.isArray(ROOM) || !ROOM.length) throw new Error('ROOM must be a nonempty array.');
@@ -1039,6 +1044,8 @@
       // Debug hook: ?preroll=seconds advances the simulation (and any ?script) before the first frame.
       const preroll = Math.min(120, Number(params.get('preroll')) || 0);
       resetPoses();
+      menuActions.race = () => startRace();
+      menuActions.demo = () => { if (!geometry) return; endRace(); demo = createDriver(demoPhases(geometry, SPAWN)); subtitle.textContent = 'Demo lap'; };
       if (params.get('mode') === 'race') startRace(); // ?mode=race starts on the grid at boot (composes with ?preroll/?strip)
       for (let i = 0; i < Math.round(preroll / STEP); i++) step();
       if (menu) for (let i = 0; i < 45; i++) step(); // settle the car onto its wheels before the menu cinematic shows it
