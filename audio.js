@@ -41,16 +41,25 @@ export const MIX = Object.freeze({ master: .92, music: .58, engine: .62, fx: .85
 const TAU = .05;            // setTargetAtTime constant: ~95% of the way there in 0.15 s
 const NOISE_SECONDS = 2;
 
-// Engine voice, scaled to a 1.2 m/s RC car: two detuned saws through a throttle-driven low-pass, the pitch
-// wrapped into three "gears" so the tone climbs, drops on the shift and climbs again (Joyride's trick).
-// An idle burble keeps a stationary car alive: the gain never reaches zero and the filter sits low.
+// Engine voice, scaled to a 1.2 m/s RC car. A real engine is not a held tone, it is a train of combustion
+// pulses, and the growl IS that pulsing. So the saws are amplitude-modulated at half the fundamental, which
+// puts sidebands at f/2 and 3f/2 — harmonic, so it reads as one voice an octave lower rather than as two.
+// That is also how the voice sounds deep on a laptop: the perceived pitch drops an octave through the missing
+// fundamental effect while the audible energy stays above 200 Hz, where small speakers still work. A fixed
+// band-pass alongside the tracking low-pass stands in for an exhaust resonance — a real one does not move with
+// revs, and having one peak stay put is most of what separates a machine from a synth patch.
+// Pitch is wrapped into three "gears" so the tone climbs, shifts and climbs again (Joyride's trick).
 export const ENGINE = Object.freeze({
   maxSpeed: 1.2, idleFreq: 120, gears: 3,
   // Each gear climbs by `gearRise`, and every upshift starts `shiftStep` higher than the last, so the tone
   // rises across the whole speed range instead of snapping back to the bottom three times (which read as a siren).
   gearRise: .85, shiftStep: .55,
-  cutoffIdle: 620, cutoffSpan: 2300, gainIdle: .09, gainSpan: .22,
-  burbleFreq: 5.5, burbleDepth: .022, // slow amplitude wobble at rest, faded out as the car moves off
+  cutoffIdle: 620, cutoffSpan: 2300, filterQ: 2.4, gainIdle: .09, gainSpan: .22,
+  subGain: .32,                       // sub an octave down, relative to the saws: weight without mud. Kept
+                                      // modest because the AM already implies f/2, and real energy down there
+                                      // is headroom a laptop speaker cannot reproduce anyway.
+  growlDepth: .72, growlIdle: .42,    // AM depth as a fraction of the current gain (idle is smoother than load)
+  formantHz: 235, formantQ: 5.5, formantGain: .5, // fixed exhaust resonance, does NOT track revs
   whineMul: 4, whineGain: .055,       // electric motor whine, four orders up, led by throttle
   rushFreq: 620, rushQ: .8, rushGain: .09, // broadband air/drivetrain rush, led by speed
 });
@@ -86,7 +95,7 @@ export function createAudio({ onState } = {}) {
     ctx: null, ok: false, muted: false, playing: false, musicPlaying: true,
     master: null, buses: { music: null, engine: null, fx: null }, noise: null,
     osc1: null, osc2: null, engFilter: null, engGain: null, burble: null, burbleGain: null, scrubGain: null,
-    whine: null, whineGain: null, rushGain: null, rushFilter: null,
+    whine: null, whineGain: null, rushGain: null, rushFilter: null, sub: null, growl: null, growlGain: null,
     music: { step: 0, nextTime: 0, on: true },
   };
   const listeners = new Set(onState ? [onState] : []);
@@ -118,14 +127,27 @@ export function createAudio({ onState } = {}) {
     // Engine: two detuned saws → low-pass → gain, plus a slow amplitude burble for the idle.
     const engGain = ctx.createGain(); engGain.gain.value = 0; engGain.connect(a.buses.engine);
     const engFilter = ctx.createBiquadFilter();
-    engFilter.type = 'lowpass'; engFilter.frequency.value = ENGINE.cutoffIdle; engFilter.Q.value = .9;
+    engFilter.type = 'lowpass'; engFilter.frequency.value = ENGINE.cutoffIdle; engFilter.Q.value = ENGINE.filterQ;
     engFilter.connect(engGain);
+    // Exhaust resonance: a fixed peak the oscillators also feed, parallel to the low-pass and into the same
+    // modulated gain, so the AM chops it too.
+    const formant = ctx.createBiquadFilter();
+    formant.type = 'bandpass'; formant.frequency.value = ENGINE.formantHz; formant.Q.value = ENGINE.formantQ;
+    const formantGain = ctx.createGain(); formantGain.gain.value = ENGINE.formantGain;
+    formant.connect(formantGain); formantGain.connect(engGain);
     const saw = detune => {
       const o = ctx.createOscillator();
       o.type = 'sawtooth'; o.frequency.value = ENGINE.idleFreq; o.detune.value = detune;
-      o.connect(engFilter); o.start(); return o;
+      o.connect(engFilter); o.connect(formant); o.start(); return o;
     };
     a.osc1 = saw(-7); a.osc2 = saw(7); a.engFilter = engFilter; a.engGain = engGain;
+    // Sub an octave down for weight. Triangle, not sine: a few harmonics survive a small speaker.
+    const subGain = ctx.createGain(); subGain.gain.value = ENGINE.subGain;
+    subGain.connect(engFilter); subGain.connect(formant);
+    const sub = ctx.createOscillator();
+    sub.type = 'triangle'; sub.frequency.value = ENGINE.idleFreq / 2;
+    sub.connect(subGain); sub.start();
+    a.sub = sub;
     // Motor whine: a quiet square well above the fundamental, tracked to the same pitch and led by throttle.
     const whineGain = ctx.createGain(); whineGain.gain.value = 0; whineGain.connect(a.buses.engine);
     const whine = ctx.createOscillator();
@@ -140,10 +162,14 @@ export function createAudio({ onState } = {}) {
     const rushSrc = ctx.createBufferSource(); rushSrc.buffer = noise; rushSrc.loop = true;
     rushSrc.connect(rushFilter); rushSrc.start();
     a.rushGain = rushGain; a.rushFilter = rushFilter;
-    const burbleGain = ctx.createGain(); burbleGain.gain.value = ENGINE.burbleDepth; burbleGain.connect(engGain.gain);
-    const burble = ctx.createOscillator(); burble.type = 'sine'; burble.frequency.value = ENGINE.burbleFreq;
-    burble.connect(burbleGain); burble.start();
-    a.burble = burble; a.burbleGain = burbleGain;
+    // The growl: amplitude modulation at half the fundamental, driving the engine gain. A sawtooth modulator
+    // gives an asymmetric pulse — a sharper attack per "firing" than a sine would — which is what reads as a
+    // engine note rather than a tremolo.
+    const growlGain = ctx.createGain(); growlGain.gain.value = 0; growlGain.connect(engGain.gain);
+    const growl = ctx.createOscillator();
+    growl.type = 'sawtooth'; growl.frequency.value = ENGINE.idleFreq / 2;
+    growl.connect(growlGain); growl.start();
+    a.growl = growl; a.growlGain = growlGain;
 
     // Tire scrub: looped noise → band-pass → gain.
     const scrubGain = ctx.createGain(); scrubGain.gain.value = 0; scrubGain.connect(a.buses.fx);
@@ -286,13 +312,18 @@ export function createAudio({ onState } = {}) {
       const freq = ENGINE.idleFreq * (1 + ENGINE.gearRise * (geared - gear) + ENGINE.shiftStep * gear);
       a.osc1.frequency.setTargetAtTime(freq, t, TAU);
       a.osc2.frequency.setTargetAtTime(freq, t, TAU);
+      a.sub.frequency.setTargetAtTime(freq / 2, t, TAU);
+      a.growl.frequency.setTargetAtTime(freq / 2, t, TAU);   // firing rate: sidebands land on f/2 and 3f/2
       a.whine.frequency.setTargetAtTime(freq * ENGINE.whineMul, t, TAU);
       a.whineGain.gain.setTargetAtTime(ENGINE.whineGain * Math.max(throttle * .8, speed * .5), t, TAU);
       a.rushFilter.frequency.setTargetAtTime(ENGINE.rushFreq * (.6 + speed), t, TAU);
       a.rushGain.gain.setTargetAtTime(ENGINE.rushGain * speed * speed, t, TAU);
       a.engFilter.frequency.setTargetAtTime(ENGINE.cutoffIdle + ENGINE.cutoffSpan * (.25 * speed + .75 * throttle), t, TAU);
-      a.engGain.gain.setTargetAtTime(ENGINE.gainIdle + ENGINE.gainSpan * Math.max(throttle, speed * .6), t, TAU);
-      a.burbleGain.gain.setTargetAtTime(ENGINE.burbleDepth * (1 - speed), t, TAU); // the burble smooths out as it pulls away
+      const load = Math.max(throttle, speed * .6), base = ENGINE.gainIdle + ENGINE.gainSpan * load;
+      a.engGain.gain.setTargetAtTime(base, t, TAU);
+      // Depth is a fraction of the current gain, so the modulator can never drive it negative. Under load the
+      // pulses bite harder; at idle it settles to a lope.
+      a.growlGain.gain.setTargetAtTime(base * (ENGINE.growlIdle + (ENGINE.growlDepth - ENGINE.growlIdle) * load), t, TAU);
       const slip = Math.max(0, (Math.abs(car.vL) - SCRUB.slipFrom) / SCRUB.slipSpan);
       const braking = car.input?.brake && Math.abs(car.vF) > SCRUB.brakeFrom ? 1 : 0;
       a.scrubGain.gain.setTargetAtTime(Math.min(1, slip) * SCRUB.slipGain + braking * SCRUB.brakeGain, t, TAU);
