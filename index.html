@@ -663,22 +663,47 @@
       }
       // ---- checkpoint gates ----
       // The checkpoints were pure maths: nothing in the world drew them, so the only way to see where to go was
-      // the ring on the minimap. Each one gets a flat ring on the carpet at EXACTLY the radius the player is
-      // judged against (captureRadius with the player's slack), so what you drive through is what counts.
-      // Taken this lap = green, the one you need next = amber and pulsing, still to come = faint white.
+      // the ring on the minimap. Each one is now a chevron on the carpet, spanning the width the player is
+      // actually judged against (captureRadius with the player's slack) and pointing the way the loop runs, so
+      // the course answers "which way next" as well as "where". Taken this lap = green, the one you need next =
+      // amber and pulsing, still to come = faint white.
       const GATE = { taken: 0x7ce04a, next: 0xffb347, todo: 0xf0e6d2 };
       const gateGroup = new THREE.Group();
       gateGroup.visible = false;
       scene.add(gateGroup);
+      const UP = new THREE.Vector3(0, 1, 0);
+      // A chevron band pointing along local +Y: outer V, then back along an inner V parallel to it.
+      function chevronShape(halfWidth, rise, thickness) {
+        const sh = new THREE.Shape();
+        sh.moveTo(-halfWidth, 0);
+        sh.lineTo(0, rise);
+        sh.lineTo(halfWidth, 0);
+        sh.lineTo(halfWidth, -thickness);
+        sh.lineTo(0, rise - thickness);
+        sh.lineTo(-halfWidth, -thickness);
+        sh.closePath();
+        return sh;
+      }
       const gates = RACE ? RACE.checkpoints.map((cp, i) => {
         const r = captureRadius({ checkpoints: RACE.checkpoints, n: RACE.checkpoints.length }, i, PLAYER_CAPTURE_SLACK);
-        const mesh = new THREE.Mesh(
-          new THREE.RingGeometry(Math.max(.02, r - .035), r, 48),
-          new THREE.MeshBasicMaterial({ color: GATE.todo, transparent: true, opacity: .55, side: THREE.DoubleSide, depthWrite: false }),
-        );
-        mesh.rotation.x = -Math.PI / 2;
+        // Which way the loop runs here, taken from the racing line rather than assumed.
+        const near = nearestLinePoint(RACE.line, { x: cp.pos[0], z: cp.pos[2] });
+        const ahead = RACE.line[(near + 3) % RACE.line.length].pos, here = RACE.line[near].pos;
+        const heading = Math.atan2(ahead[0] - here[0], ahead[2] - here[2]);
+        // Every vertex must sit inside the capture circle, or the arrow promises a pass it will not give. The
+        // furthest points are the INNER bottom corners at (±w, -(th + shift)), not the outer tips — getting that
+        // wrong drew them at 1.065 r. With w .91, rise .50, th .24 and the shape centred by shifting .13, they
+        // land at hypot(.91, .37) = 0.982 r. Change these four numbers and re-measure the buffer, do not eyeball.
+        const geo = new THREE.ShapeGeometry(chevronShape(r * .91, r * .50, r * .24));
+        geo.translate(0, -r * .13, 0);                           // centre the shape's own extent on the checkpoint
+        const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+          color: GATE.todo, transparent: true, opacity: .55, side: THREE.DoubleSide, depthWrite: false,
+        }));
+        mesh.rotation.x = -Math.PI / 2;                          // lay it flat: local +Y becomes world -Z
+        mesh.rotateOnWorldAxis(UP, heading + Math.PI);           // then swing it onto the loop's heading
         mesh.position.set(cp.pos[0], cp.pos[1] + .008, cp.pos[2]); // above the carpet dressing, which tops out at 4 mm
         mesh.renderOrder = 2;
+        mesh.userData.heading = heading;
         gateGroup.add(mesh);
         return mesh;
       }) : [];
@@ -696,7 +721,7 @@
         gates.forEach((g, i) => {
           const taken = me?.started && i < me.next;
           g.material.color.setHex(race ? (taken ? GATE.taken : i === me.next ? GATE.next : GATE.todo) : GATE.todo);
-          g.material.opacity = taken ? .5 : .55;
+          g.material.opacity = taken ? .32 : .55;          // passed arrows recede so the live one reads first
         });
         if (!chevrons.length) return;
         for (const c of chevrons) c.mesh.setColorAt(c.index, me?.started && c.cp < me.next ? CHEV_LIT : CHEV_OFF);
