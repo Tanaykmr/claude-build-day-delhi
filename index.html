@@ -895,7 +895,13 @@
         const order = standings(race);
         set('pos', hud.pos, `${order.indexOf(0) + 1}/${racers.length}`);
         set('time', hud.time, fmtTime(me.finished ? me.time : race.clock));
-        if (race.phase === 'finished' && hud.last.resultsOrder !== order.join()) { hud.last.resultsOrder = order.join(); showResults(); }
+        // Rivals keep racing after the player is done, so the board has to follow them home. Keying the repaint
+        // on the ORDER alone missed the case that matters: a rival crossing the line without passing anybody
+        // leaves the order identical, so its row stayed on "lap 3" instead of switching to its finish time.
+        if (race.phase === 'finished') {
+          const key = `${order.join()}|${race.cars.map(c => c.finished ? c.time.toFixed(2) : `L${c.lap}`).join(',')}`;
+          if (hud.last.resultsOrder !== key) { hud.last.resultsOrder = key; showResults(); }
+        }
       }
       // Contact effects: drift smoke, impact dust/sparks, landing puffs and skid marks (fx.js).
       const effects = createEffects({ THREE, scene });
