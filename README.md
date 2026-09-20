@@ -68,7 +68,7 @@ fetch('/_vercel/insights/event', { method: 'POST', headers: { 'content-type': 'a
 
 ```sh
 node check-audio.mjs             # engine pitch map (no sound card needed)
-node check-maps.mjs              # validateMap against adversarial model output, with a 50 ms budget per case
+node check-maps.mjs              # validateMap against adversarial model output, a 50 ms budget per case, and reachability
 node check-room.mjs              # live room + props: contract, bounds, ramp math, corridors, prop rest
 node check-room.mjs --fallback   # same for room.fallback.js
 node check-room.mjs --ramp=15 --detail=low

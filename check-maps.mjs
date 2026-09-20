@@ -74,4 +74,40 @@ for (const [label, input] of Object.entries(accepts)) {
   assert.ok(onSlab, where(`spawn ${map.SPAWN.pos.map(n => n.toFixed(1))} is off the floor slab`));
 }
 
-console.log(`maps ok — ${Object.keys(rejects).length} inputs rejected, ${Object.keys(accepts).length} repaired, all under ${BUDGET_MS} ms`);
+// --- reachability ---------------------------------------------------------------------------------
+// The check that asks whether the map is playable rather than merely well-formed. Both directions matter:
+// it has to catch a sealed car, and it must NOT cry wolf on a normal room full of desks the car drives under.
+const warnsAboutReach = m => validateMap(m, {}).warnings.some(w => /can only reach/.test(w));
+
+const sealed = {
+  SPAWN: { pos: [0, .07, 0], heading: 0 },
+  ROOM: [box([0, -0.05, 0], [10, .1, 10], 'carpet'),
+    // a 1 m x 1 m closet around the spawn, walled on all four sides
+    box([0, .5, -0.6], [1.4, 1, .2], 'wall'), box([0, .5, 0.6], [1.4, 1, .2], 'wall'),
+    box([-0.6, .5, 0], [.2, 1, 1.4], 'wall'), box([0.6, .5, 0], [.2, 1, 1.4], 'wall')],
+};
+assert.ok(warnsAboutReach(sealed), 'a car sealed in a closet should be reported');
+
+const openRoom = {
+  SPAWN: { pos: [0, .07, 0], heading: 0 },
+  ROOM: [box([0, -0.05, 0], [10, .1, 10], 'carpet'),
+    box([0, .5, -4.9], [10, 1, .2], 'wall'), box([0, .5, 4.9], [10, 1, .2], 'wall'),
+    box([-4.9, .5, 0], [.2, 1, 10], 'wall'), box([4.9, .5, 0], [.2, 1, 10], 'wall')],
+};
+assert.ok(!warnsAboutReach(openRoom), 'an empty walled room must not be reported as unreachable');
+
+// Desks: tops at 0.73 m with thin legs. The car drives UNDER them, so they must not read as walls.
+const desks = { SPAWN: { pos: [0, .07, 0], heading: 0 }, ROOM: [...openRoom.ROOM] };
+for (let gx = -3; gx <= 3; gx += 1.5) for (let gz = -3; gz <= 3; gz += 1.5) {
+  desks.ROOM.push(box([gx, .73, gz], [1.2, .04, .7], 'desktop'));
+  for (const [lx, lz] of [[-.55, -.3], [.55, -.3], [-.55, .3], [.55, .3]]) desks.ROOM.push(box([gx + lx, .355, gz + lz], [.05, .71, .05], 'leg'));
+}
+assert.ok(!warnsAboutReach(desks), 'a room full of desks the car fits under must not be reported as unreachable');
+
+// The shipped office is the ground truth: whatever the bar is, a known-good room has to clear it.
+const { ROOM: OFFICE, SPAWN: OFFICE_SPAWN } = await import('./room.js');
+const office = validateMap({ SPAWN: OFFICE_SPAWN, ROOM: OFFICE, PROPS: [] }, { name: 'The Office' });
+assert.ok(!office.warnings.some(w => /can only reach/.test(w)),
+  `the built-in office must pass reachability, got: ${office.warnings.join(' | ')}`);
+
+console.log(`maps ok — ${Object.keys(rejects).length} inputs rejected, ${Object.keys(accepts).length} repaired, all under ${BUDGET_MS} ms; reachability catches a sealed car and clears the built-in office`);

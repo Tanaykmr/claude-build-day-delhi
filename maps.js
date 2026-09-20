@@ -253,6 +253,16 @@ export function validateMap(raw, { name = 'My room', size = null } = {}) {
     else warnings.push('Could not find open floor for the spawn; the car may start inside something');
   }
 
+  // Reachability. Everything above proves the room is well-formed; none of it asks the only question that
+  // matters to a driver — can the car get anywhere? A geometrically perfect room that seals the car into an
+  // alcove passes every other check here and reads as "the game is broken". So: grid the floor, block the
+  // cells within a car's half-width of anything it would actually hit, flood from the spawn, and say what
+  // fraction of the open floor it can truly reach.
+  const drivable = reachability(ROOM, bounds, spawn, new Set([main, ...floors]));
+  if (drivable.fraction < .35 || drivable.area < 1.5) {
+    warnings.push(`The car can only reach ${Math.round(drivable.fraction * 100)}% of the floor (${drivable.area.toFixed(1)} m²) from the spawn — furniture may be sealing it in`);
+  }
+
   for (const [i, p] of (Array.isArray(raw.PROPS) ? raw.PROPS : []).entries()) {
     if (PROPS.length >= 24) { warnings.push('Kept the first 24 props'); break; }
     if (!p || !fin(p.pos, 3) || !fin(p.size, 3)) { warnings.push(`Dropped PROPS[${i}]: bad numbers`); continue; }
@@ -265,6 +275,48 @@ export function validateMap(raw, { name = 'My room', size = null } = {}) {
   const mapName = (typeof raw.name === 'string' && raw.name.trim()) || name || 'My room';
   const mapSize = fin(raw.size, 2) && raw.size.every(n => n > 0) ? raw.size.map(Number) : [bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ];
   return { map: { name: mapName.slice(0, 40), size: mapSize, SPAWN: { pos: spawn, heading }, ROOM, PROPS }, warnings };
+}
+
+// The car is 0.12 x 0.055 m and 0.025 m tall. A gap narrower than a car's width is not a corridor, and a
+// surface whose underside clears the roof (a desktop at 0.73 m) is something to drive UNDER, not into —
+// treating those as walls would call a perfectly good office mostly unreachable.
+const CAR_HALF = .08, CAR_TOP = .05, CELL = .12;
+function reachability(ROOM, bounds, spawn, skip) {
+  const W = Math.max(CELL, bounds.maxX - bounds.minX), D = Math.max(CELL, bounds.maxZ - bounds.minZ);
+  const nx = Math.max(1, Math.min(400, Math.ceil(W / CELL))), nz = Math.max(1, Math.min(400, Math.ceil(D / CELL)));
+  const sx = W / nx, sz = D / nz;
+  const blocked = new Uint8Array(nx * nz);
+  for (const e of ROOM) {
+    if (skip.has(e) || e.tag === 'ramp' || e.tag === 'ceiling') continue; // a ramp is a road, not a wall
+    const top = e.pos[1] + e.size[1] / 2, bottom = e.pos[1] - e.size[1] / 2;
+    if (top <= .02 || bottom >= CAR_TOP) continue;                        // floor dressing, or clears the roof
+    // Rotated boxes use their unrotated extent. ponytail: an approximation, and a conservative one — it can
+    // only over-block, never under-block, so this never reports a sealed room as open.
+    const x0 = e.pos[0] - e.size[0] / 2 - CAR_HALF, x1 = e.pos[0] + e.size[0] / 2 + CAR_HALF;
+    const z0 = e.pos[2] - e.size[2] / 2 - CAR_HALF, z1 = e.pos[2] + e.size[2] / 2 + CAR_HALF;
+    const i0 = Math.max(0, Math.floor((x0 - bounds.minX) / sx)), i1 = Math.min(nx - 1, Math.ceil((x1 - bounds.minX) / sx));
+    const j0 = Math.max(0, Math.floor((z0 - bounds.minZ) / sz)), j1 = Math.min(nz - 1, Math.ceil((z1 - bounds.minZ) / sz));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) blocked[j * nx + i] = 1;
+  }
+  let free = 0;
+  for (let k = 0; k < blocked.length; k++) if (!blocked[k]) free++;
+  const si = Math.max(0, Math.min(nx - 1, Math.floor((spawn[0] - bounds.minX) / sx)));
+  const sj = Math.max(0, Math.min(nz - 1, Math.floor((spawn[2] - bounds.minZ) / sz)));
+  const seen = new Uint8Array(nx * nz);
+  let reached = 0;
+  if (!blocked[sj * nx + si]) {
+    const stack = [sj * nx + si];
+    seen[stack[0]] = 1;
+    while (stack.length) {
+      const k = stack.pop(); reached++;
+      const i = k % nx, j = (k - i) / nx;
+      if (i > 0 && !blocked[k - 1] && !seen[k - 1]) { seen[k - 1] = 1; stack.push(k - 1); }
+      if (i < nx - 1 && !blocked[k + 1] && !seen[k + 1]) { seen[k + 1] = 1; stack.push(k + 1); }
+      if (j > 0 && !blocked[k - nx] && !seen[k - nx]) { seen[k - nx] = 1; stack.push(k - nx); }
+      if (j < nz - 1 && !blocked[k + nx] && !seen[k + nx]) { seen[k + nx] = 1; stack.push(k + nx); }
+    }
+  }
+  return { fraction: free ? reached / free : 0, area: reached * sx * sz, cells: nx * nz };
 }
 
 function boundsOf(list) {
