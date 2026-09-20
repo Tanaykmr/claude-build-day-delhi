@@ -68,6 +68,7 @@ fetch('/_vercel/insights/event', { method: 'POST', headers: { 'content-type': 'a
 
 ```sh
 node check-audio.mjs             # engine pitch map (no sound card needed)
+node check-maps.mjs              # validateMap against adversarial model output, with a 50 ms budget per case
 node check-room.mjs              # live room + props: contract, bounds, ramp math, corridors, prop rest
 node check-room.mjs --fallback   # same for room.fallback.js
 node check-room.mjs --ramp=15 --detail=low
@@ -167,6 +168,7 @@ Handling and chase-camera equations (vehicle-relative velocity, speed-scaled ste
 | `race.js` | A | Race progress (checkpoints, laps, standings), countdown clock, AI line driver; shared by index.html and check-drive.mjs |
 | `audio.js` | A | Synthesized engine, tire scrub, impacts, room tone and the chiptune loop |
 | `check-audio.mjs` | A | Engine pitch map: rises with speed, one dip per upshift, no wrap at the top gear |
+| `check-maps.mjs` | B | validateMap under adversarial input: rejects junk, repairs the rest, never loops unbounded |
 | `fx.js` | A | Drift smoke, impact dust and sparks, landing puffs, skid marks |
 | `shot-cdp.mjs` | A | DevTools-protocol screenshot used by shot.sh |
 | `room.js`, `props.js`, `room.fallback.js` | B | Room data (fixed cuboids), dynamic props, tested simple room |

@@ -199,9 +199,17 @@ export function validateMap(raw, { name = 'My room', size = null } = {}) {
   if (!floors.length) floors = ROOM.filter(e => Math.abs(top(e)) < 0.1 && e.size[0] * e.size[2] > 4 && e.size[1] < 0.3);
   let bounds;
   if (!floors.length) {
-    const b = boundsOf(ROOM.filter(e => e.tag !== 'ceiling'));
-    const W = size?.[0] > 1 ? size[0] : (b.maxX - b.minX + 1), D = size?.[1] > 1 ? size[1] : (b.maxZ - b.minZ + 1);
-    const slab = { pos: [(b.minX + b.maxX) / 2, -0.05, (b.minZ + b.maxZ) / 2], size: [W, 0.1, D], color: '#4a4d52', tag: 'carpet' };
+    // Centre on the MEDIAN box, not the bounding box: one box with an extra zero in its coordinate drags a
+    // bbox centre out into empty space, leaving the real room off the slab entirely. And clamp the slab like
+    // every other box, because bounds derived from it drive the spawn search below — an unclamped slab let a
+    // single stray box turn that search into a 100 km grid and hang the tab with no way out.
+    const rest = ROOM.filter(e => e.tag !== 'ceiling');
+    const mid = (list, axis) => { const v = list.map(e => e.pos[axis]).sort((a, b) => a - b); return v[v.length >> 1] ?? 0; };
+    const b = boundsOf(rest);
+    const cx = mid(rest, 0), cz = mid(rest, 2);
+    const W = clampSize(size?.[0] > 1 ? size[0] : (b.maxX - b.minX + 1));
+    const D = clampSize(size?.[1] > 1 ? size[1] : (b.maxZ - b.minZ + 1));
+    const slab = { pos: [cx, -0.05, cz], size: [W, 0.1, D], color: '#4a4d52', tag: 'carpet' };
     ROOM.unshift(slab); floors = [slab]; warnings.push('No floor came back; added a grey floor under everything');
   }
   const main = floors.reduce((a, b) => (a.size[0] * a.size[2] >= b.size[0] * b.size[2] ? a : b));
@@ -231,8 +239,12 @@ export function validateMap(raw, { name = 'My room', size = null } = {}) {
   const clearAt = (x, z, r) => x - r > bounds.minX && x + r < bounds.maxX && z - r > bounds.minZ && z + r < bounds.maxZ &&
     !obstacles.some(e => Math.abs(e.pos[0] - x) < e.size[0] / 2 + r && Math.abs(e.pos[2] - z) < e.size[2] / 2 + r);
   if (!clearAt(spawn[0], spawn[2], 0.3)) {
+    // Step from the span so the grid is always about 160x160, whatever the floor turned out to be. A fixed
+    // 0.25 m step over a floor that came back far too large is an unbounded loop, and an unbounded loop here
+    // is a frozen tab the user cannot escape.
     let best = null, bestD = Infinity;
-    for (let z = bounds.minZ + 0.4; z < bounds.maxZ - 0.4; z += 0.25) for (let x = bounds.minX + 0.4; x < bounds.maxX - 0.4; x += 0.25) {
+    const stepX = Math.max(0.25, (bounds.maxX - bounds.minX) / 160), stepZ = Math.max(0.25, (bounds.maxZ - bounds.minZ) / 160);
+    for (let z = bounds.minZ + 0.4; z < bounds.maxZ - 0.4; z += stepZ) for (let x = bounds.minX + 0.4; x < bounds.maxX - 0.4; x += stepX) {
       if (!clearAt(x, z, 0.35)) continue;
       const d = Math.hypot(x - spawn[0], z - spawn[2]);
       if (d < bestD) { bestD = d; best = [x, 0.07, z]; }

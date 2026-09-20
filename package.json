@@ -5,7 +5,8 @@
   "scripts": {
     "check-drive": "node check-drive.mjs",
     "check-room": "node check-room.mjs",
-    "check-audio": "node check-audio.mjs"
+    "check-audio": "node check-audio.mjs",
+    "check-maps": "node check-maps.mjs"
   },
   "devDependencies": {
     "@dimforge/rapier3d-compat": "0.14.0"
