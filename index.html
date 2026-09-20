@@ -584,19 +584,24 @@
         }
       }
       onMenuChange = open => { if (!open) renderer.domElement.focus(); setPaused(open); };
+      // Cmd/Ctrl/Alt chords belong to the browser, never to the car. KeyR is a driving key (recover), so an
+      // unguarded preventDefault here swallowed Cmd+R: the page never reloaded, and the recover fired instead,
+      // dropping the car back onto the racing line wherever it happened to be. Same for Cmd+S, Cmd+A, Cmd+D.
+      // Shift is deliberately NOT in this guard — it is the handbrake, so Shift+W is a real driving input.
+      const browserChord = e => e.metaKey || e.ctrlKey || e.altKey;
       window.addEventListener('keydown', e => {
-        if (!drivingKeys.has(e.code) || e.target.closest?.('button, a, input, textarea')) return;
+        if (browserChord(e) || !drivingKeys.has(e.code) || e.target.closest?.('button, a, input, textarea')) return;
         e.preventDefault();
         if (paused || failed) return;
         if (demo) { demo = null; subtitle.textContent = baseSubtitle; }
         if (e.code === 'KeyR') { if (!e.repeat && !held.has(e.code)) resetRequested = true; }
         held.add(e.code);
       });
-      window.addEventListener('keyup', e => { if (drivingKeys.has(e.code)) { e.preventDefault(); held.delete(e.code); } });
+      window.addEventListener('keyup', e => { if (!drivingKeys.has(e.code)) return; if (!browserChord(e)) e.preventDefault(); held.delete(e.code); });
       // Race / sound keys (edge-triggered, not driving keys): Enter starts or retries a race, Esc (or F) returns to
       // free drive, M toggles sound.
       window.addEventListener('keydown', e => {
-        if (e.repeat || paused || failed || e.target.closest?.('button, a, input, textarea')) return;
+        if (e.repeat || paused || failed || browserChord(e) || e.target.closest?.('button, a, input, textarea')) return;
         if (e.code === 'Enter' && RACE && (!race || race.phase === 'finished')) { e.preventDefault(); startRace(); }
         else if ((e.code === 'Escape' || e.code === 'KeyF') && race) { e.preventDefault(); endRace(); }
         else if (e.code === 'KeyM' && !menu) { e.preventDefault(); audio.toggleMute(); } // with a menu, menu.js owns M and drives the same shared state

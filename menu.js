@@ -566,6 +566,7 @@ export function mountMenu({ statusEl = null, onChange = () => {}, audio: game = 
   addEventListener('keydown', unlock);
 
   addEventListener('keydown', e => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return; // Cmd+R and friends are the browser's, not the menu's
     if (e.target.closest?.('input, textarea, select')) {
       if (e.code !== 'Escape' || !open) return; // typing: leave arrows and Enter to the field
       e.target.blur(); // Escape leaves the field and falls through to the normal back behaviour
