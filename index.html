@@ -98,7 +98,7 @@
     </div>
     <canvas id="minimap" class="hud-panel" width="448" height="368" hidden aria-label="Minimap"></canvas>
     <div id="countdown" class="hud-center" hidden aria-live="assertive">3</div>
-    <div class="hud-panel hud-bc" id="title-strip" hidden><kbd>Enter</kbd> race · 3 laps vs 3 rivals</div>
+    <div class="hud-panel hud-bc" id="title-strip" hidden>Free drive · press <kbd>Enter</kbd> to start a race, 3 laps vs 3 rivals</div>
     <div class="hud-panel hud-bl" id="controls"><span><kbd>WASD / arrows</kbd> drive</span><span><kbd>Space</kbd> brake</span><span><kbd>Shift</kbd> handbrake</span><span><kbd>R</kbd> recover</span><span id="race-keys" hidden><kbd>Enter</kbd> race · <kbd>F</kbd> free drive</span><span class="sound"><kbd>M</kbd><svg id="sound-glyph" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M4 9.2h4L13 5v14l-5-4.2H4z" fill="currentColor"/><g id="sound-waves"><path d="M16 9.2a4 4 0 0 1 0 5.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18.7 6.6a7.6 7.6 0 0 1 0 10.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></g><g id="sound-slash" hidden><path d="M16.5 8.5l6 7M22.5 8.5l-6 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></g></svg><span id="sound-label">sound</span></span></div>
     <a class="hud-panel hud-br" id="mode-link" href="?fallback=1">Simple room</a>
     <div id="speedo" aria-hidden="true">
@@ -124,7 +124,7 @@
       forwardSpeed, validBody, needsRecovery, eulerToQuaternion, rampGeometry, demoPhases, createDriver, carState,
     } from './car.js';
     // Race logic (checkpoints, standings, AI line driver) is shared with check-drive.mjs through race.js.
-    import { createRace, startCountdown, tickRace, updateProgress, standings, createAIDriver, carAhead, lineSpawn, nearestLinePoint } from './race.js';
+    import { createRace, startCountdown, tickRace, updateProgress, captureRadius, standings, createAIDriver, carAhead, lineSpawn, nearestLinePoint } from './race.js';
     import { mountMenu } from './menu.js';
     // Synthesized audio and contact effects are Track A modules (same pattern as race.js), so this file stays
     // the host: it wires them to the car and the scene and owns no signal-processing or particle code itself.
@@ -661,13 +661,44 @@
         if (mesh.instanceColor) continue;                       // carpet is untinted, so allocate the buffer once
         for (let i = 0; i < mesh.count; i++) mesh.setColorAt(i, CHEV_OFF);
       }
+      // ---- checkpoint gates ----
+      // The checkpoints were pure maths: nothing in the world drew them, so the only way to see where to go was
+      // the ring on the minimap. Each one gets a flat ring on the carpet at EXACTLY the radius the player is
+      // judged against (captureRadius with the player's slack), so what you drive through is what counts.
+      // Taken this lap = green, the one you need next = amber and pulsing, still to come = faint white.
+      const GATE = { taken: 0x7ce04a, next: 0xffb347, todo: 0xf0e6d2 };
+      const gateGroup = new THREE.Group();
+      gateGroup.visible = false;
+      scene.add(gateGroup);
+      const gates = RACE ? RACE.checkpoints.map((cp, i) => {
+        const r = captureRadius({ checkpoints: RACE.checkpoints, n: RACE.checkpoints.length }, i, PLAYER_CAPTURE_SLACK);
+        const mesh = new THREE.Mesh(
+          new THREE.RingGeometry(Math.max(.02, r - .035), r, 48),
+          new THREE.MeshBasicMaterial({ color: GATE.todo, transparent: true, opacity: .55, side: THREE.DoubleSide, depthWrite: false }),
+        );
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.position.set(cp.pos[0], cp.pos[1] + .008, cp.pos[2]); // above the carpet dressing, which tops out at 4 mm
+        mesh.renderOrder = 2;
+        gateGroup.add(mesh);
+        return mesh;
+      }) : [];
       let chevKey = null;
-      function paintChevrons() {
-        if (!chevrons.length) return;
+      function paintChevrons(now = 0) {
         const me = race?.cars[0];
+        gateGroup.visible = !!race;
+        if (race && gates.length) { // the next gate breathes, so it reads as the live one at a glance
+          const pulse = .55 + .35 * (.5 + .5 * Math.sin(now * .006));
+          gates[me.next].material.opacity = pulse;
+        }
         const key = race ? `${me.lap}:${me.started ? me.next : -1}` : 'off';
-        if (key === chevKey) return;                            // only touched when the player's progress moves
+        if (key === chevKey) return;                            // only repainted when the player's progress moves
         chevKey = key;
+        gates.forEach((g, i) => {
+          const taken = me?.started && i < me.next;
+          g.material.color.setHex(race ? (taken ? GATE.taken : i === me.next ? GATE.next : GATE.todo) : GATE.todo);
+          g.material.opacity = taken ? .5 : .55;
+        });
+        if (!chevrons.length) return;
         for (const c of chevrons) c.mesh.setColorAt(c.index, me?.started && c.cp < me.next ? CHEV_LIT : CHEV_OFF);
         for (const mesh of new Set(chevrons.map(c => c.mesh))) mesh.instanceColor.needsUpdate = true;
       }
@@ -824,7 +855,7 @@
       function updateHud(dt = 0) {
         speedo.update({ speed: forwardSpeed(car), throttle: Number(down('KeyW', 'ArrowUp')) - Number(down('KeyS', 'ArrowDown')), brake: down('Space'), dt });
         drawMinimap();
-        paintChevrons();
+        paintChevrons(performance.now());
         if (!race) return;
         const me = race.cars[0];
         if (race.phase === 'countdown') { const n = String(Math.ceil(race.countdown)); if (hud.last.cd !== n) audio.event('beep'); set('cd', hud.countdown, n); }
