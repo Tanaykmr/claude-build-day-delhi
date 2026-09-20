@@ -408,6 +408,21 @@
 .stm-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .stm-thumb .n { position: absolute; left: 8px; bottom: 6px; font: 800 12px/1 var(--display); font-style: italic; color: #fff; text-shadow: 0 1px 2px #000; }
 .stm-thumb .rm { position: absolute; top: 6px; right: 6px; }
+/* A photo the browser cannot decode is marked where it lands, so it never reaches a billed API call. */
+.stm-thumb.bad { box-shadow: 0 0 0 2px var(--coral, #ff5a3c) inset, 0 14px 26px -14px rgba(0, 0, 0, 0.95); }
+.stm-thumb.bad img { opacity: 0.25; filter: grayscale(1); }
+.stm-thumb .warn {
+  position: absolute; inset: auto 6px 6px 6px; text-align: center;
+  font: 700 10px/1.25 var(--body); letter-spacing: 0.02em; color: #fff;
+  background: rgba(255, 90, 60, 0.92); border-radius: 7px; padding: 4px 5px;
+}
+.stm-thumb.bad .n { display: none; }
+
+/* How to shoot the room. Output quality leans on this more than on anything else on the page. */
+.stm-shots { list-style: none; padding: 0; margin: 14px 0 0; display: grid; gap: 7px; }
+.stm-shots li { display: flex; gap: 9px; align-items: baseline; font: 500 13px/1.45 var(--body); color: #c6cee0; }
+.stm-shots li::before { content: ""; width: 12px; height: 3px; border-radius: 2px; background: var(--orange); transform: skewX(-24deg) translateY(-3px); flex: none; }
+.stm-shots b { color: var(--paper); font-weight: 700; }
 .stm-x { appearance: none; border: 0; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; color: var(--paper); background: rgba(7, 11, 22, 0.82); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14) inset; transition: background-color 160ms ease-out, transform 120ms ease-out; }
 .stm-x:hover { background: rgba(255, 45, 120, 0.7); }
 .stm-x:active { transform: scale(0.96); }

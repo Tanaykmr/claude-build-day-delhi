@@ -113,8 +113,14 @@ function template({ fallback, raceHref, demoHref, fallbackHref, mapName }) {
             <label class="stm-drop" data-drop tabindex="0">
               <input type="file" accept="image/*" multiple data-files>
               <span class="stm-chip count" data-count>0 / 10</span>
-              <div>${I.camera}<h3>Drop photos here</h3><p>JPEG or PNG, wide shots beat close-ups. iPhone HEIC needs exporting first. Click or drag and drop.</p></div>
+              <div>${I.camera}<h3>Drop photos here</h3><p>Click, or drag and drop.</p></div>
             </label>
+            <ul class="stm-shots">
+              <li>One <b>wide</b> shot from each corner, floor in frame — close-ups of one desk tell Claude nothing about the room.</li>
+              <li><b>Overlap</b> them, so the room joins up into one space.</li>
+              <li><b>No people in shot.</b> Claude declines requests to map rooms with people in them, and you are billed for the attempt.</li>
+              <li>JPEG or PNG. iPhone shoots <b>HEIC</b> by default — export first, or set Settings &rsaquo; Camera &rsaquo; Formats to Most Compatible.</li>
+            </ul>
             <div class="stm-thumbs" data-thumbs></div>
           </div>
           <div class="stm-card rv" style="--i:3">
@@ -607,16 +613,29 @@ export function mountMenu({ statusEl = null, onChange = () => {}, audio: game = 
   let controller = null;
 
   function renderPhotos() {
-    thumbs.innerHTML = photos.map((p, i) => `<div class="stm-thumb"><img src="${p.url}" alt=""><span class="n">${i + 1}</span><button type="button" class="stm-x rm" data-rm="${i}" title="Remove">${I.x}</button></div>`).join('');
+    thumbs.innerHTML = photos.map((p, i) => `<div class="stm-thumb${p.bad ? ' bad' : ''}" title="${esc(p.bad ? `${p.file.name}: ${p.bad}` : p.file.name)}"><img src="${p.url}" alt=""><span class="n">${i + 1}</span>${p.bad ? `<span class="warn">${esc(p.bad)}</span>` : ''}<button type="button" class="stm-x rm" data-rm="${i}" title="Remove">${I.x}</button></div>`).join('');
     count.textContent = `${photos.length} / 10`;
     thumbs.querySelectorAll('[data-rm]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); const i = Number(b.dataset.rm); URL.revokeObjectURL(photos[i].url); photos.splice(i, 1); renderPhotos(); }));
+  }
+  // Every photo is decoded the moment it lands, so an unusable one is flagged on the spot. It used to be
+  // accepted here (HEIC explicitly so) and only blow up inside generateMap — after the upload, after the
+  // model call, after the user had been billed for it.
+  async function vet(p) {
+    try { const bmp = await createImageBitmap(p.file); bmp.close?.(); p.bad = null; }
+    catch {
+      p.bad = /\.(heic|heif)$/i.test(p.file.name) || /hei[cf]/i.test(p.file.type)
+        ? 'HEIC — export it as JPEG first' : 'this browser cannot decode it';
+    }
+    renderPhotos();
   }
   function addFiles(list) {
     let added = 0;
     for (const f of list) {
       if (!f.type.startsWith('image/') && !/\.(heic|heif)$/i.test(f.name)) continue;
       if (photos.length >= 10) { showToast('Ten photos is plenty'); break; }
-      photos.push({ file: f, url: URL.createObjectURL(f) }); added++;
+      const p = { file: f, url: URL.createObjectURL(f), bad: null };
+      photos.push(p); added++;
+      vet(p);
     }
     if (added) renderPhotos(); else showToast('Drop image files');
   }
@@ -666,6 +685,11 @@ export function mountMenu({ statusEl = null, onChange = () => {}, audio: game = 
     const apiKey = keyIn.value.trim();
     result.hidden = true; logReset(); lastStep = null;
     if (!photos.length) { logError('Add at least one photo of the room. Five to ten from different corners works best.'); sfx.error(); return; }
+    const unusable = photos.filter(p => p.bad);
+    if (unusable.length) { // stop before the upload, not after the bill
+      logError(`${unusable.map(p => p.file.name).join(', ')} cannot be read (${unusable[0].bad}). Remove ${unusable.length === 1 ? 'it' : 'them'} or swap in a JPEG.`);
+      sfx.error(); return;
+    }
     if (!apiKey) { logError('Paste your Anthropic API key. It is sent only to api.anthropic.com from this browser.'); sfx.error(); keyIn.focus(); return; }
     if (remember.checked) localStorage.setItem(KEY_STORE, apiKey); else localStorage.removeItem(KEY_STORE);
     if (photos.length < 5) showToast(`${photos.length} photo${photos.length === 1 ? '' : 's'} · five or more gives a better layout`, 3200);
