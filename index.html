@@ -82,10 +82,13 @@
        right-hand link cannot share its row; stack it above instead of beside it. */
     .hud-bl { bottom: 188px; max-width: calc(100vw - 24px); } .hud-br { bottom: 270px; } .hud-bc { bottom: 320px; font-size: 17px; } .panel { padding: 10px 12px; } }
   </style>
+  <!-- Vendored, not fetched. three, its BufferGeometryUtils addon and Rapier used to come from jsDelivr at
+       runtime, which made a CDN blip a blank page for everyone. They ship with the site now; upgrade with
+       npm i three@<ver> @dimforge/rapier3d-compat@<ver> and re-copy into vendor/ (see the README). -->
   <script type="importmap">
     { "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+      "three": "./vendor/three.module.js",
+      "three/addons/": "./vendor/three/addons/"
     } }
   </script>
 </head>
@@ -250,7 +253,7 @@
       detail.textContent = 'Loading renderer and physics…';
       let BufferGeometryUtils;
       [THREE, BufferGeometryUtils, { default: RAPIER }] = await Promise.all([
-        import('three'), import('three/addons/utils/BufferGeometryUtils.js'), import('https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.14.0/+esm'),
+        import('three'), import('three/addons/utils/BufferGeometryUtils.js'), import('./vendor/rapier.es.js'),
       ]);
       await RAPIER.init();
       // Track B's lighting/material direction is pure data. If it fails to load, keep flat lights so the demo still boots.

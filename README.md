@@ -44,6 +44,28 @@ Press Enter (or open `/?mode=race`) for a 3-lap race against three rivals (coral
 
 Debug automation on the live page (A track): `?cam=x,y,z`, `?spawn=x,y,z,heading`, `?preroll=<s>`, `?script=<timed key holds>` such as `W:3,WA:2` where each token is a set of keys held for that many seconds (`W A S D` drive, `_` = Space brake, `H` = Shift handbrake, `R` = recover). See the comments in index.html.
 
+## Vendored dependencies
+
+three, its `BufferGeometryUtils` addon and Rapier live in `vendor/` and ship with the site. They used to be
+fetched from jsDelivr at runtime, which meant a CDN blip was a blank page for every visitor — it failed once
+during development. The game page now makes **zero** external requests.
+
+To upgrade:
+
+```sh
+npm i three@<version> @dimforge/rapier3d-compat@<version>
+cp node_modules/three/build/three.module.js vendor/three.module.js
+cp node_modules/three/examples/jsm/utils/BufferGeometryUtils.js vendor/three/addons/utils/BufferGeometryUtils.js
+cp node_modules/@dimforge/rapier3d-compat/rapier.es.js vendor/rapier.es.js
+```
+
+Then strip the trailing `//# sourceMappingURL=` line from each, since the `.map` files are not vendored.
+Licences are kept beside them as `LICENSE.three` and `LICENSE.rapier`.
+
+Two external requests remain, both non-blocking and both only on the menu: Google Fonts (the page renders in
+fallback faces without it) and, on the Create page only, the Anthropic SDK, which is fetched on demand and
+reports a clear error if it cannot load.
+
 ## Analytics
 
 Vercel Web Analytics, via the script tag under `<title>` in `index.html`:
